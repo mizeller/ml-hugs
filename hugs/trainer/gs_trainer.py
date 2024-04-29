@@ -10,16 +10,13 @@ import torch
 import itertools
 import torchvision
 import numpy as np
-from PIL import Image
 from tqdm import tqdm
 from lpips import LPIPS
 from loguru import logger
 
 from hugs.datasets.utils import (
     get_rotating_camera,
-    get_smpl_canon_params,
     get_smpl_static_params,
-    get_static_camera,
 )
 from hugs.losses.utils import ssim
 from hugs.datasets import NeumanDataset
@@ -33,7 +30,6 @@ from hugs.utils.vis import save_ply
 from hugs.utils.image import psnr, save_image
 from hugs.utils.general import (
     RandomIndexIterator,
-    load_human_ckpt,
     save_images,
     create_video,
 )
@@ -765,7 +761,7 @@ class GaussianTrainer:
                     render_mode="human",
                     scaling_modifier=scale_mod,
                 )
- 
+
                 image = render_pkg["render"]
 
                 progress_imgs.append(image)
