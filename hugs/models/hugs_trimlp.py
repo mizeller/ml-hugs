@@ -28,6 +28,7 @@ from hugs.utils.rotations import (
 )
 from hugs.cfg.constants import SMPL_PATH
 from hugs.utils.subdivide_smpl import subdivide_smpl_model
+from hugs.utils.init_opt import optimize_init
 
 from .modules.lbs import lbs_extra
 from .modules.smpl_layer import SMPL
@@ -149,6 +150,7 @@ class HUGS_TRIMLP:
         )
 
     def create_betas(self, betas, requires_grad=False):
+        # TODO: this method is called multiple consecutive times (inefficient, refactor)
         self.betas = nn.Parameter(betas, requires_grad=requires_grad)
         logger.info(
             f"Created betas with shape: {betas.shape}, requires_grad: {requires_grad}"
@@ -621,6 +623,7 @@ class HUGS_TRIMLP:
 
     @torch.no_grad()
     def get_vitruvian_verts(self):
+        "return vertices spread over: https://en.wikipedia.org/wiki/Vitruvian_Man"
         vitruvian_pose = torch.zeros(69, dtype=self.smpl.dtype, device=self.device)
         vitruvian_pose[2] = 1.0
         vitruvian_pose[5] = -1.0
@@ -663,18 +666,19 @@ class HUGS_TRIMLP:
     def initialize(self):
         t_pose_verts = self.get_vitruvian_verts_template()
 
-        self.scaling_multiplier = torch.ones((t_pose_verts.shape[0], 1), device="cuda")
+        n_verts = t_pose_verts.shape[0]
+        self.scaling_multiplier = torch.ones((n_verts, 1), device="cuda")  # N x 1
 
-        xyz_offsets = torch.zeros_like(t_pose_verts)
-        colors = torch.ones_like(t_pose_verts) * 0.5
+        xyz_offsets = torch.zeros_like(t_pose_verts)  # N x 3
+        colors = torch.ones_like(t_pose_verts) * 0.5  # N x 3
 
-        shs = torch.zeros((colors.shape[0], 3, 16)).float().cuda()
+        shs = torch.zeros((n_verts, 3, 16)).float().cuda()  # N x 3 x 16
         shs[:, :3, 0] = colors
         shs[:, 3:, 1:] = 0.0
-        shs = shs.transpose(1, 2).contiguous()
+        shs = shs.transpose(1, 2).contiguous()  # N x 16 x 3
 
-        scales = torch.zeros_like(t_pose_verts)
-        for v in range(t_pose_verts.shape[0]):
+        scales = torch.zeros_like(t_pose_verts)  # N x 3
+        for v in range(n_verts):
             selected_edges = torch.any(self.edges == v, dim=-1)
             selected_edges_len = torch.norm(
                 t_pose_verts[self.edges[selected_edges][0]]
@@ -701,32 +705,36 @@ class HUGS_TRIMLP:
 
         mesh = trimesh.Trimesh(
             vertices=t_pose_verts.detach().cpu().numpy(), faces=self.smpl_template.faces
-        )
+        ) 
         vert_normals = torch.tensor(mesh.vertex_normals).float().cuda()
 
-        gs_normals = torch.zeros_like(vert_normals)
+        gs_normals = torch.zeros_like(vert_normals)  # N x 3
         gs_normals[:, 2] = 1.0
 
-        norm_rotmat = torch_rotation_matrix_from_vectors(gs_normals, vert_normals)
+        norm_rotmat = torch_rotation_matrix_from_vectors(
+            gs_normals, vert_normals
+        )  # N x 3 x 3
 
-        rotq = matrix_to_quaternion(norm_rotmat)
-        rot6d = matrix_to_rotation_6d(norm_rotmat)
+        rotq = matrix_to_quaternion(norm_rotmat)  # N x 4
+        rot6d = matrix_to_rotation_6d(norm_rotmat)  # N x 3 x 3
 
-        self.normals = gs_normals
+        self.normals = gs_normals  # QUESTION: why assign gs_normals to self.normals? they're all identical
         deformed_normals = (norm_rotmat @ gs_normals.unsqueeze(-1)).squeeze(-1)
 
-        opacity = 0.1 * torch.ones(
-            (t_pose_verts.shape[0], 1), dtype=torch.float, device="cuda"
-        )
+        opacity = 0.1 * torch.ones((n_verts, 1), dtype=torch.float, device="cuda")
 
         posedirs = self.smpl_template.posedirs.detach().clone()
         lbs_weights = self.smpl_template.lbs_weights.detach().clone()
 
-        self.n_gs = t_pose_verts.shape[0]
+        self.n_gs = n_verts
         self._xyz = nn.Parameter(t_pose_verts.requires_grad_(True))
 
-        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
-        return {
+        self.max_radii2D = torch.zeros((n_verts), device="cuda")
+
+        # optimize human gaussian model for 7k iterations
+        logger.info("Optimizing initial human gaussian model for 7000 iterations.")
+
+        _gt = {
             "xyz_offsets": xyz_offsets,
             "scales": scales,
             "rot6d_canon": rot6d,
@@ -738,6 +746,8 @@ class HUGS_TRIMLP:
             "faces": self.smpl.faces_tensor,
             "edges": self.edges,
         }
+
+        return optimize_init(self, num_steps=7000, _gt_vals=_gt)
 
     def setup_optimizer(self, cfg):
         self.percent_dense = cfg.percent_dense

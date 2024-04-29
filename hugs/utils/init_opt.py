@@ -3,7 +3,7 @@
 # Copyright (C) 2024 Apple Inc. All Rights Reserved.
 #
 
-import sys
+from tqdm import tqdm
 import torch
 
 from hugs.cfg.config import cfg as default_cfg
@@ -28,8 +28,8 @@ def optimize_init(model, lr: float = 1e-3, num_steps: int = 2000):
     global_orient = torch.zeros((3)).to("cuda").float()
     betas = torch.zeros((10)).to("cuda").float()
     
-    gt_vals = model.initialize()
     
+    gt_vals = model.initialize() if _gt_vals is None else _gt_vals
     print("===== Ground truth values: =====")
     for k, v in gt_vals.items():
         print(k, v.shape)
@@ -38,9 +38,9 @@ def optimize_init(model, lr: float = 1e-3, num_steps: int = 2000):
     
     losses = []
 
-    for i in range(num_steps):
-        
-        if hasattr(model, 'canon_forward'):
+    pbar = tqdm(range(num_steps))
+    for i in pbar:
+        if hasattr(model, "canon_forward"):
             model_out = model.canon_forward()
         else:
             model_out = model.forward(global_orient, body_pose, betas)
@@ -59,8 +59,8 @@ def optimize_init(model, lr: float = 1e-3, num_steps: int = 2000):
         loss = sum(loss_dict.values())
         loss.backward()
         loss_str = ", ".join([f"{k}: {v.item():.7f}" for k, v in loss_dict.items()])
-        print(f"Step {i:04d}: {loss.item():.7f} ({loss_str})", end='\r')
         
+        pbar.set_description(f"Step {i:04d}: {loss.item():.7f} ({loss_str})")
         optim.step()
         optim.zero_grad(set_to_none=True)
         lr_scheduler.step(loss.item())

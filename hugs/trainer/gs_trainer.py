@@ -120,8 +120,7 @@ class GaussianTrainer:
                 )
                 self.human_gs.create_betas(init_betas[0], cfg.human.optim_betas)
                 if not cfg.eval:
-                    self.human_gs.initialize()
-                    self.human_gs = optimize_init(self.human_gs, num_steps=7000)
+                    self.human_gs = self.human_gs.initialize()
 
         if cfg.mode in ["scene", "human_scene"]:
             self.scene_gs = SceneGS(
