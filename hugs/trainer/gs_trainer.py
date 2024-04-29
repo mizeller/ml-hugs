@@ -84,7 +84,7 @@ class GaussianTrainer:
         self.anim_dataset = get_anim_dataset(cfg)
 
         self.eval_metrics = {}
-        self.lpips = LPIPS(net="alex", pretrained=True).to('cuda')
+        self.lpips = LPIPS().to("cuda")
         # get models
         self.human_gs, self.scene_gs = None, None
 
