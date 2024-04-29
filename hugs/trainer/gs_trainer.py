@@ -765,11 +765,11 @@ class GaussianTrainer:
                     render_mode="human",
                     scaling_modifier=scale_mod,
                 )
-                
+ 
                 image = render_pkg["render"]
 
                 progress_imgs.append(image)
-                
+
                 render_pkg = render_human_scene(
                     data=data,
                     human_gs_out=human_gs_out,
@@ -781,7 +781,7 @@ class GaussianTrainer:
                 image = render_pkg["render"]
 
                 progress_imgs.append(image)
-                
+
             else:
                 render_pkg = render_human_scene(
                     data=data,
@@ -832,9 +832,9 @@ class GaussianTrainer:
             canon_forward_out = self.human_gs.canon_forward()
 
         pbar = tqdm(range(nframes), desc="Canonical:")
-        if bg_color is "white":
+        if bg_color == "white":
             bg_color = torch.tensor([1, 1, 1], dtype=torch.float32, device="cuda")
-        elif bg_color is "black":
+        elif bg_color == "black":
             bg_color = torch.tensor([0, 0, 0], dtype=torch.float32, device="cuda")
 
         imgs = []
