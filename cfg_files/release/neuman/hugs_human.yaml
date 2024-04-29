@@ -14,12 +14,12 @@ dataset:
 train:
   batch_size: 1
   num_workers: 0
-  num_steps: 14998
-  save_ckpt_interval: 15000
+  num_steps: 7000 # 14998
+  save_ckpt_interval: 5000 # 15000
   val_interval: 1000
   anim_interval: 15000
   optim_scene: true
-  save_progress_images: false
+  save_progress_images: true # false
   progress_save_interval: 10
 human:
   name: hugs_trimlp
