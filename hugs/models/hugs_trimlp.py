@@ -93,9 +93,7 @@ class HUGS_TRIMLP:
         self.init_scale_multiplier = init_scale_multiplier
         self.use_deformer = use_deformer
         self.disable_posedirs = disable_posedirs
-        
-        self.deformer = 'smpl'
-        
+
         if betas is not None:
             self.create_betas(betas, requires_grad=False)
         
