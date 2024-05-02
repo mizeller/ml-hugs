@@ -44,7 +44,6 @@ cfg.human.name = 'hugs'
 cfg.human.ckpt = None
 cfg.human.sh_degree = 3
 cfg.human.n_subdivision = 0
-cfg.human.only_rgb = False
 cfg.human.use_surface = False
 cfg.human.use_deformer = False
 cfg.human.init_2d = False

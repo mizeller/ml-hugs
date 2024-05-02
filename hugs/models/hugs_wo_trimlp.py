@@ -141,7 +141,6 @@ class HUGS_WO_TRIMLP:
     def __init__(
         self, 
         sh_degree: int, 
-        only_rgb: bool=False,
         n_subdivision: int=0,  
         use_surface=False,  
         init_2d=False,
@@ -149,7 +148,6 @@ class HUGS_WO_TRIMLP:
         isotropic=False,
         init_scale_multiplier=1.0,
     ):
-        self.only_rgb = only_rgb
         self.active_sh_degree = 0
         self.max_sh_degree = sh_degree  
         self._xyz = torch.empty(0)
@@ -274,11 +272,8 @@ class HUGS_WO_TRIMLP:
     @property
     def get_features(self):
         features_dc = self._features_dc
-        if self.only_rgb:
-            return features_dc.squeeze(1)
-        else:
-            features_rest = self._features_rest
-            return torch.cat((features_dc, features_rest), dim=1)
+        features_rest = self._features_rest
+        return torch.cat((features_dc, features_rest), dim=1)
     
     @property
     def get_opacity(self):

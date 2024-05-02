@@ -61,7 +61,6 @@ class HUGS_TRIMLP:
     def __init__(
         self,
         sh_degree: int,
-        only_rgb: bool = False,
         n_subdivision: int = 0,
         use_surface=False,
         init_2d=False,
@@ -74,7 +73,6 @@ class HUGS_TRIMLP:
         triplane_res=256,
         betas=None,
     ):
-        self.only_rgb = only_rgb
         self.active_sh_degree = 0
         self.max_sh_degree = sh_degree
         self._xyz = torch.empty(0)

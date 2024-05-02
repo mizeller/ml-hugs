@@ -26,7 +26,6 @@ human:
   ckpt: null
   sh_degree: 0
   n_subdivision: 2
-  only_rgb: false
   use_surface: false
   use_deformer: [true, false]
   init_2d: false
