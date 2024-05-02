@@ -6,10 +6,8 @@
 import cv2
 import numpy as np
 import torch
-from pytorch3d.renderer import look_at_view_transform
 
 from hugs.utils.graphics import fov2focal, get_projection_matrix
-from hugs.utils.rotations import batch_look_at_th
 
 
 def get_static_camera(img_size=512, fov=0.4, device='cuda'):
@@ -125,19 +123,16 @@ def get_rotating_camera(img_size=512, fov=0.4, dist=5.0, device='cuda', nframes=
 
 
 def get_predefined_pose(pose_type):
+    body_pose = torch.zeros((1, 69), dtype=torch.float32)  # case: t_pose
     if pose_type == 'da_pose':
-        body_pose = torch.zeros((1, 69), dtype=torch.float32)
         body_pose[:, 2] = 1.0
         body_pose[:, 5] = -1.0
     elif pose_type == 'a_pose':
-        body_pose = torch.zeros((1, 69), dtype=torch.float32)
         body_pose[:, 2] = 0.2
         body_pose[:, 5] = -0.2
         body_pose[:, 47] = -0.8
         body_pose[:, 50] = 0.8
-    elif pose_type == 't_pose':
-        body_pose = torch.zeros((1, 69), dtype=torch.float32)
-        
+
     return body_pose
 
 
