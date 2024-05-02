@@ -697,9 +697,9 @@ class GaussianTrainer():
             canon_forward_out = self.human_gs.canon_forward()
         
         pbar = tqdm(range(nframes), desc="Canonical:")
-        if bg_color is 'white':
+        if bg_color == 'white':
             bg_color = torch.tensor([1, 1, 1], dtype=torch.float32, device="cuda")
-        elif bg_color is 'black':
+        elif bg_color == 'black':
             bg_color = torch.tensor([0, 0, 0], dtype=torch.float32, device="cuda")
             
             
