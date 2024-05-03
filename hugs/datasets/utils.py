@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 import torch
 
-from hugs.utils.graphics import fov2focal, get_projection_matrix
+from hugs.utils.graphics_utils import fov2focal, getProjectionMatrix
 
 
 def get_static_camera(img_size=512, fov=0.4, device='cuda'):
@@ -28,7 +28,7 @@ def get_static_camera(img_size=512, fov=0.4, device='cuda'):
     cam_int[0, 2] = img_size / 2
     cam_int[1, 2] = img_size / 2
     
-    projection_matrix = get_projection_matrix(znear=znear, zfar=zfar, fovX=fovx, fovY=fovy).transpose(0,1)
+    projection_matrix = getProjectionMatrix(znear=znear, zfar=zfar, fovX=fovx, fovY=fovy).transpose(0,1)
     full_proj_transform = (world_view_transform.unsqueeze(0).bmm(projection_matrix.unsqueeze(0))).squeeze(0)
     camera_center = world_view_transform.inverse()[3, :3]
     
@@ -97,7 +97,7 @@ def get_rotating_camera(img_size=512, fov=0.4, dist=5.0, device='cuda', nframes=
     data = []
     for i in range(len(w2c_mats)):
         world_view_transform = w2c_mats[i]
-        projection_matrix = get_projection_matrix(znear=znear, zfar=zfar, fovX=fovx, fovY=fovy).transpose(0,1)
+        projection_matrix = getProjectionMatrix(znear=znear, zfar=zfar, fovX=fovx, fovY=fovy).transpose(0,1)
         full_proj_transform = (world_view_transform.unsqueeze(0).bmm(projection_matrix.unsqueeze(0))).squeeze(0)
         camera_center = world_view_transform.inverse()[3, :3]
         

@@ -19,7 +19,7 @@ from .neuman_utils.geometry import transformations
 from .neuman_utils.cameras.camera_pose import CameraPose
 from .neuman_utils.geometry.basics import Translation, Rotation
 from hugs.cfg.constants import AMASS_SMPLH_TO_SMPL_JOINTS, NEUMAN_PATH
-from hugs.utils.graphics import get_projection_matrix, BasicPointCloud
+from hugs.utils.graphics_utils import getProjectionMatrix, BasicPointCloud
 
 
 def get_center_and_diag(cam_centers):
@@ -357,7 +357,7 @@ class NeumanDataset(torch.utils.data.Dataset):
         world_view_transform = torch.from_numpy(cap.cam_pose.world_to_camera).T # torch.eye(4)
         c2w = torch.from_numpy(cap.cam_pose.camera_to_world)
         
-        projection_matrix = get_projection_matrix(znear=znear, zfar=zfar, fovX=fovx, fovY=fovy).transpose(0,1)
+        projection_matrix = getProjectionMatrix(znear=znear, zfar=zfar, fovX=fovx, fovY=fovy).transpose(0,1)
         full_proj_transform = (world_view_transform.unsqueeze(0).bmm(projection_matrix.unsqueeze(0))).squeeze(0)
         camera_center = world_view_transform.inverse()[3, :3]
         cam_intrinsics = torch.from_numpy(cap.intrinsic_matrix).float()
