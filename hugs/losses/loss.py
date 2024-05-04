@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from hugs.utils.sampler import PatchSampler
 
 from .utils import l1_loss, ssim
+from hugs.utils.depth_utils import depth_to_normal
 
 
 class HumanSceneLoss(nn.Module):
@@ -42,16 +43,30 @@ class HumanSceneLoss(nn.Module):
         
         if self.use_patches:
             self.patch_sampler = PatchSampler(num_patch=num_patches, patch_size=patch_size, ratio_mask=0.9, dilate=0)
-        
+    
+    def get_edge_aware_distortion_map(self, gt_image, distortion_map):
+        # taken from GOF
+        grad_img_left = torch.mean(torch.abs(gt_image[:, 1:-1, 1:-1] - gt_image[:, 1:-1, :-2]), 0)
+        grad_img_right = torch.mean(torch.abs(gt_image[:, 1:-1, 1:-1] - gt_image[:, 1:-1, 2:]), 0)
+        grad_img_top = torch.mean(torch.abs(gt_image[:, 1:-1, 1:-1] - gt_image[:, :-2, 1:-1]), 0)
+        grad_img_bottom = torch.mean(torch.abs(gt_image[:, 1:-1, 1:-1] - gt_image[:, 2:, 1:-1]), 0)
+        max_grad = torch.max(torch.stack([grad_img_left, grad_img_right, grad_img_top, grad_img_bottom], dim=-1), dim=-1)[0]
+        # pad
+        max_grad = torch.exp(-max_grad)
+        max_grad = torch.nn.functional.pad(max_grad, (1, 1, 1, 1), mode="constant", value=0)
+        return distortion_map * max_grad
+ 
     def forward(
         self, 
         data, 
         render_pkg,
+        viewpoint_cam,
         human_gs_out,
         render_mode, 
         human_gs_init_values=None,
         bg_color=None,
         human_bg_color=None,
+        iteration: int = None
     ):
         loss_dict = {}
         extras_dict = {}
@@ -64,8 +79,8 @@ class HumanSceneLoss(nn.Module):
             
         gt_image = data['rgb']
         mask = data['mask'].unsqueeze(0)
-        
-        pred_img = render_pkg['render']
+        rendering = render_pkg['render']
+        pred_img = rendering[:3, :, :]
         
         if render_mode == "human":
             gt_image = gt_image * mask + human_bg_color[:, None, None] * (1. - mask)
@@ -93,7 +108,7 @@ class HumanSceneLoss(nn.Module):
                 Ll1 = l1_loss(pred_img, gt_image)
             else:
                 raise NotImplementedError
-            loss_dict['l1'] = self.l_l1_w * Ll1
+            loss_dict['l1'] = self.l_l1_w * Ll1 # rgb loss
 
         if self.l_ssim_w > 0.0:
             loss_ssim = 1.0 - ssim(pred_img, gt_image)
@@ -143,7 +158,6 @@ class HumanSceneLoss(nn.Module):
             loss_lpips_human = self.lpips(pred_patches.clip(max=1), gt_patches).mean()
             loss_dict['lpips_patch_human'] = self.l_lpips_w * loss_lpips_human * self.l_humansep_w
 
-
         if self.l_lbs_w > 0.0 and human_gs_out['lbs_weights'] is not None and not render_mode == "scene":
             if 'gt_lbs_weights' in human_gs_out.keys():
                 loss_lbs = F.mse_loss(
@@ -154,7 +168,38 @@ class HumanSceneLoss(nn.Module):
                     human_gs_out['lbs_weights'], 
                     human_gs_init_values['lbs_weights']).mean()
             loss_dict['lbs'] = self.l_lbs_w * loss_lbs
-        
+       
+        # NOTE: add Gaussian Opacity Field regularizers here; i.e. depth distortion 
+        #       and depth normal consistency (initially only for scene rendering)
+        if render_mode == 'scene':
+            # depth distortion regularization
+            distortion_map = rendering[8, :, :] # TODO: figure out what dimension this is from the GOF renderer
+            distortion_map = self.get_edge_aware_distortion_map(gt_image, distortion_map)
+            distortion_loss = distortion_map.mean()
+            
+            # depth normal consistency
+            depth = rendering[6, :, :]
+            depth_normal, _ = depth_to_normal(viewpoint_cam, depth[None, ...])
+            depth_normal = depth_normal.permute(2, 0, 1)
+
+            render_normal =rendering[3:6, :, :]
+            render_normal = torch.nn.functional.normalize(render_normal, p=2, dim=0)
+           
+            # TODO: extract viewpoint_cam from data 
+            c2w = (viewpoint_cam.world_view_transform.T).inverse()
+            normal2 = c2w[:3, :3] @ render_normal.reshape(3, -1)
+            render_normal_world = normal2.reshape(3, *render_normal.shape[1:])
+            
+            normal_error = 1 - (render_normal_world * depth_normal).sum(dim=0)
+            depth_normal_loss = normal_error.mean()
+            # TODO: add weights for additional terms to config file 
+            lambda_distortion = 100 if iteration >= 15000 else 0.0
+            lambda_depth_normal = 0.05 if iteration >= 15000 else 0.0        
+
+            # add new regularization terms to loss_dict 
+            loss_dict['distortion'] = lambda_distortion * distortion_loss
+            loss_dict['depth_normal'] = lambda_depth_normal * depth_normal_loss
+  
         loss = 0.0
         for k, v in loss_dict.items():
             loss += v
