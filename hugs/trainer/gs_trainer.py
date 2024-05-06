@@ -36,8 +36,9 @@ from hugs.utils.general import (
 from hugs.renderer.gs_renderer import render_human_scene
 from hugs import gaussian_renderer as GOF_renderer
 from hugs.scene import Scene
-# from hugs.utils.depth_utils import depth_to_normal
-# from hugs.utils.vis_utils import apply_depth_colormap, colormap
+from hugs.utils.depth_utils import depth_to_normal
+from hugs.utils.vis_utils import apply_depth_colormap, colormap
+from hugs.losses.loss import l1_loss
 
 def get_train_dataset(cfg):
     if cfg.dataset.name == "neuman":
@@ -71,6 +72,30 @@ def get_anim_dataset(cfg):
         dataset = None
 
     return dataset
+
+
+def L1_loss_appearance(image, gt_image, gaussians, view_idx, return_transformed_image=False):
+    appearance_embedding = gaussians.get_apperance_embedding(view_idx)
+    # center crop the image
+    origH, origW = image.shape[1:]
+    H = origH // 32 * 32
+    W = origW // 32 * 32
+    left = origW // 2 - W // 2
+    top = origH // 2 - H // 2
+    crop_image = image[:, top:top+H, left:left+W]
+    crop_gt_image = gt_image[:, top:top+H, left:left+W]
+    
+    # down sample the image
+    crop_image_down = torch.nn.functional.interpolate(crop_image[None], size=(H//32, W//32), mode="bilinear", align_corners=True)[0]
+    
+    crop_image_down = torch.cat([crop_image_down, appearance_embedding[None].repeat(H//32, W//32, 1).permute(2, 0, 1)], dim=0)[None]
+    mapping_image = gaussians.appearance_network(crop_image_down)
+    transformed_image = mapping_image * crop_image
+    if not return_transformed_image:
+        return l1_loss(transformed_image, crop_gt_image)
+    else:
+        transformed_image = torch.nn.functional.interpolate(transformed_image, size=(origH, origW), mode="bilinear", align_corners=True)[0]
+        return transformed_image
 
 
 class GaussianTrainer:
@@ -256,6 +281,8 @@ class GaussianTrainer:
 
         # GOF
         trainCameras = self.scene.getTrainCameras().copy()
+        for idx, camera in enumerate(self.scene.getTrainCameras()):
+            camera.idx = idx
         self.scene_gs.compute_3D_filter(cameras=trainCameras)
 
         pbar = tqdm(range(self.cfg.train.num_steps + 1), desc="Training")
@@ -273,7 +300,6 @@ class GaussianTrainer:
             rnd_idx = next(rand_idx_iter)
             data = self.train_dataset[rnd_idx]
 
-
             if self.human_gs:
                 human_gs_out = self.human_gs.forward(
                     smpl_scale=data["smpl_scale"][None],
@@ -281,7 +307,6 @@ class GaussianTrainer:
                     is_train=True,
                     ext_tfs=None,
                 )
-
 
             # pick a random data sample & render
             rnd_idx = next(rand_idx_iter)
@@ -331,6 +356,51 @@ class GaussianTrainer:
             loss.backward()
 
             loss_dict["loss"] = loss
+
+            # ~~~~ save images (GOF way) ~~~~
+            is_save_images = True
+            if is_save_images and (t_iter % self.cfg.scene.densification_interval == 0):
+                with torch.no_grad():
+                    eval_cam = trainCameras[random.randint(0, len(trainCameras) -1)]
+                    rendering = GOF_renderer.render(eval_cam, self.scene_gs, bg_color)["render"]
+                    image = rendering[:3, :, :]
+                    transformed_image = L1_loss_appearance(image, eval_cam.original_image.cuda(), self.scene_gs, eval_cam.idx, return_transformed_image=True)
+                    normal = rendering[3:6, :, :]
+                    normal = torch.nn.functional.normalize(normal, p=2, dim=0)
+                    
+                # transform to world space
+                c2w = (eval_cam.world_view_transform.T).inverse()
+                normal2 = c2w[:3, :3] @ normal.reshape(3, -1)
+                normal = normal2.reshape(3, *normal.shape[1:])
+                normal = (normal + 1.) / 2.
+                
+                depth = rendering[6, :, :]
+                depth_normal, _ = depth_to_normal(eval_cam, depth[None, ...])
+                depth_normal = (depth_normal + 1.) / 2.
+                depth_normal = depth_normal.permute(2, 0, 1)
+                
+                gt_image = eval_cam.original_image.cuda()
+                
+                depth_map = apply_depth_colormap(depth[..., None], rendering[7, :, :, None], near_plane=None, far_plane=None)
+                depth_map = depth_map.permute(2, 0, 1)
+                
+                accumlated_alpha = rendering[7, :, :, None]
+                colored_accum_alpha = apply_depth_colormap(accumlated_alpha, None, near_plane=0.0, far_plane=1.0)
+                colored_accum_alpha = colored_accum_alpha.permute(2, 0, 1)
+                
+                distortion_map = rendering[8, :, :]
+                distortion_map = colormap(distortion_map.detach().cpu().numpy()).to(normal.device)
+            
+                row0 = torch.cat([gt_image, image, depth_normal, normal], dim=2)
+                row1 = torch.cat([depth_map, colored_accum_alpha, distortion_map, transformed_image], dim=2)
+                
+                image_to_show = torch.cat([row0, row1], dim=1)
+                image_to_show = torch.clamp(image_to_show, 0, 1)
+                
+                os.makedirs(f"{self.cfg.logdir}/log_images", exist_ok = True)
+                torchvision.utils.save_image(image_to_show, f"{self.cfg.logdir}/log_images/{t_iter}.jpg")
+
+            # ~~~~ save images (GOF way) ~~~~
 
             if t_iter % 10 == 0:
                 postfix_dict = {
@@ -477,7 +547,7 @@ class GaussianTrainer:
                     self.scene_gs.optimizer.step()
                     self.scene_gs.optimizer.zero_grad(set_to_none=True)
 
-        # train progress images
+        # train progress images (only for human, human_scene modes)
         if self.cfg.train.save_progress_images:
             video_fname = f"{self.cfg.logdir}/train_{self.cfg.dataset.name}_{self.cfg.dataset.seq}.mp4"
             create_video(f"{self.cfg.logdir}/train_progress/", video_fname, fps=10)
@@ -900,3 +970,5 @@ class GaussianTrainer:
             image = render_pkg["render"]
             imgs.append(image)
         return imgs
+
+    

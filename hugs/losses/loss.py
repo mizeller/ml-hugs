@@ -217,8 +217,8 @@ class HumanSceneLoss(nn.Module):
             normal_error = 1 - (render_normal_world * depth_normal).sum(dim=0)
             depth_normal_loss = normal_error.mean()
             # TODO: add weights for additional terms to config file 
-            lambda_distortion = 100 if iteration >= self.l_dist_from_iter else self.l_dist_w
-            lambda_depth_normal = 0.05 if iteration >= self.l_depth_normal_from_iter else self.l_depth_normal_w        
+            lambda_distortion = self.l_dist_w if iteration >= self.l_dist_from_iter else 0.0
+            lambda_depth_normal = self.l_depth_normal_w if iteration >= self.l_depth_normal_from_iter else 0.0
 
             # add new regularization terms to loss_dict 
             loss_dict['distortion'] = lambda_distortion * distortion_loss

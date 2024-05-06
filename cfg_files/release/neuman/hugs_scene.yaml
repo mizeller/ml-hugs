@@ -14,10 +14,11 @@ dataset:
 train:
   batch_size: 1
   num_workers: 0
-  num_steps: 14998
-  save_ckpt_interval: 15000
+  num_steps: 15000
+  save_ckpt_interval: 5000 # 15000
   val_interval: 1000
-  anim_interval: 15000
+  viz_interval: 250 # interval at which training images are saved in train/ dir
+  anim_interval: 2000 # 1000 # 15000
   optim_scene: true
   save_progress_images: false
   progress_save_interval: 10
@@ -120,7 +121,7 @@ scene:
     ssim_w: 0.2
     l1_w: 0.8
     # GOF params
-    dist_from_iter: 15000 
-    dist_w: 0.0
-    depth_normal_from_iter: 15000  
-    depth_normal_w: 0.0
+    dist_w: 100
+    depth_normal_w: 0.05
+    dist_from_iter: 3000 # 15000 
+    depth_normal_from_iter: 1000 # 15000  
