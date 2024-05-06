@@ -126,7 +126,6 @@ class GaussianTrainer:
                 self.human_gs.create_betas(init_betas[0], cfg.human.optim_betas)
                 if not cfg.eval:
                     self.human_gs = self.human_gs.initialize()
-                    self.human_gs = optimize_init(self.human_gs, num_steps=7000)
 
         if cfg.mode in ["scene", "human_scene"]:
             self.scene_gs = SceneGS(
@@ -309,7 +308,7 @@ class GaussianTrainer:
                 human_bg_color = None
                 render_human_separate = False
 
-            if render_mode is not "scene":
+            if render_mode != "scene":
                 render_pkg = render_human_scene(
                                 data=data,
                                 human_gs_out=human_gs_out,
