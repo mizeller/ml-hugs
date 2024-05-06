@@ -43,7 +43,7 @@ class Scene:
         # shuffle = True
         random.shuffle(scene_info.train_cameras)  # Multi-res consistent random shuffling
         self.cameras_extent = scene_info.nerf_normalization["radius"]
-        self.train_cameras[1.0] = cameraList_from_camInfos(scene_info.train_cameras, 1.0, cfg)
+        self.train_cameras[1.0] = cameraList_from_camInfos(scene_info.train_cameras, 1.0)
         
         self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
 

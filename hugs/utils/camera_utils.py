@@ -16,27 +16,21 @@ from hugs.utils.graphics_utils import fov2focal
 
 WARNED = False
 
-def loadCam(cfg, id, cam_info, resolution_scale):
+def loadCam(id, cam_info, resolution_scale):
     orig_w, orig_h = cam_info.image.size
 
-    if cfg.gof.resolution in [1, 2, 4, 8, 16, 32, 64]: # TODO: continue debugging here!
-        resolution = round(orig_w/(resolution_scale * cfg.gof.resolution)), round(orig_h/(resolution_scale * cfg.gof.resolution))
-    else:  # should be a type that converts to float
-        if cfg.gof.resolution == -1:
-            if orig_w > 1600:
-                global WARNED
-                if not WARNED:
-                    print("[ INFO ] Encountered quite large input images (>1.6K pixels width), rescaling to 1.6K.\n "
-                        "If this is not desired, please explicitly specify '--resolution/-r' as 1")
-                    WARNED = True
-                global_down = orig_w / 1600
-            else:
-                global_down = 1
-        else:
-            global_down = orig_w / cfg.gof.resolution
+    if orig_w > 1600:
+        global WARNED
+        if not WARNED:
+            print("[ INFO ] Encountered quite large input images (>1.6K pixels width), rescaling to 1.6K.\n "
+                "If this is not desired, please explicitly specify '--resolution/-r' as 1")
+            WARNED = True
+        global_down = orig_w / 1600
+    else:
+        global_down = 1
 
-        scale = float(global_down) * float(resolution_scale)
-        resolution = (int(orig_w / scale), int(orig_h / scale))
+    scale = float(global_down) * float(resolution_scale)
+    resolution = (int(orig_w / scale), int(orig_h / scale))
 
     if len(cam_info.image.split()) > 3:
         import torch
@@ -51,13 +45,13 @@ def loadCam(cfg, id, cam_info, resolution_scale):
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
                   image=gt_image, gt_alpha_mask=loaded_mask,
-                  image_name=cam_info.image_name, uid=id, data_device="cuda") # NOTE: hardocded cfg.gof.data_device
+                  image_name=cam_info.image_name, uid=id, data_device="cuda")
 
-def cameraList_from_camInfos(cam_infos, resolution_scale, args):
+def cameraList_from_camInfos(cam_infos, resolution_scale):
     camera_list = []
 
     for id, c in enumerate(cam_infos):
-        camera_list.append(loadCam(args, id, c, resolution_scale))
+        camera_list.append(loadCam(id, c, resolution_scale))
 
     return camera_list
 
