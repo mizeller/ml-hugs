@@ -6,6 +6,7 @@
 import os
 import glob
 import shutil
+import random
 import torch
 import itertools
 import torchvision
@@ -25,7 +26,6 @@ from hugs.models.hugs_trimlp import HUGS_TRIMLP
 from hugs.models.hugs_wo_trimlp import HUGS_WO_TRIMLP
 from hugs.models import SceneGS
 from hugs.utils.init_opt import optimize_init
-from hugs.renderer.gs_renderer import render_human_scene
 from hugs.utils.vis import save_ply
 from hugs.utils.image import psnr, save_image
 from hugs.utils.general import (
@@ -34,6 +34,11 @@ from hugs.utils.general import (
     create_video,
 )
 
+from hugs.renderer.gs_renderer import render_human_scene
+from hugs import gaussian_renderer as GOF_renderer
+from hugs.scene import Scene
+# from hugs.utils.depth_utils import depth_to_normal
+# from hugs.utils.vis_utils import apply_depth_colormap, colormap
 
 def get_train_dataset(cfg):
     if cfg.dataset.name == "neuman":
@@ -121,11 +126,14 @@ class GaussianTrainer:
                 self.human_gs.create_betas(init_betas[0], cfg.human.optim_betas)
                 if not cfg.eval:
                     self.human_gs = self.human_gs.initialize()
+                    self.human_gs = optimize_init(self.human_gs, num_steps=7000)
 
         if cfg.mode in ["scene", "human_scene"]:
             self.scene_gs = SceneGS(
                 sh_degree=cfg.scene.sh_degree,
             )
+            # init scene object for to use GOF's loss terms
+            self.scene= Scene(self.cfg, self.train_dataset, self.scene_gs)
 
         # setup the optimizers
         if self.human_gs:
@@ -248,13 +256,17 @@ class GaussianTrainer:
         if self.human_gs:
             self.human_gs.train()
 
+        # GOF
+        trainCameras = self.scene.getTrainCameras().copy()
+        self.scene_gs.compute_3D_filter(cameras=trainCameras)
+        viewpoint_stack = None
+
         pbar = tqdm(range(self.cfg.train.num_steps + 1), desc="Training")
 
         rand_idx_iter = RandomIndexIterator(len(self.train_dataset))
         sgrad_means, sgrad_stds = [], []
+        render_mode = self.cfg.mode
         for t_iter in range(self.cfg.train.num_steps + 1):
-            render_mode = self.cfg.mode
-
             if self.scene_gs and self.cfg.train.optim_scene:
                 self.scene_gs.update_learning_rate(t_iter)
 
@@ -279,7 +291,15 @@ class GaussianTrainer:
                     scene_gs_out = self.scene_gs.forward()
                 else:
                     render_mode = "human"
+            
+            # Pick a random Camera; TODO: remove viewpoint_cam altogether in next refactor
+            if not viewpoint_stack:
+                viewpoint_stack = trainCameras
+            viewpoint_cam = viewpoint_stack.pop(random.randint(0, len(viewpoint_stack)-1))
 
+            # pick a random data sample & render
+            rnd_idx = next(rand_idx_iter)
+            data = self.train_dataset[rnd_idx]
             bg_color = torch.rand(3, dtype=torch.float32, device="cuda")
 
             if self.cfg.human.loss.humansep_w > 0.0 and render_mode == "human_scene":
@@ -289,15 +309,22 @@ class GaussianTrainer:
                 human_bg_color = None
                 render_human_separate = False
 
-            render_pkg = render_human_scene(
-                data=data,
-                human_gs_out=human_gs_out,
-                scene_gs_out=scene_gs_out,
-                bg_color=bg_color,
-                human_bg_color=human_bg_color,
-                render_mode=render_mode,
-                render_human_separate=render_human_separate,
-            )
+            if render_mode is not "scene":
+                render_pkg = render_human_scene(
+                                data=data,
+                                human_gs_out=human_gs_out,
+                                scene_gs_out=scene_gs_out,
+                                bg_color=bg_color,
+                                human_bg_color=human_bg_color,
+                                render_mode=render_mode,
+                                render_human_separate=render_human_separate,
+                            )
+            else:
+                render_pkg = GOF_renderer.render(
+                    viewpoint_camera=viewpoint_cam, 
+                    gaussians=self.scene_gs, 
+                    bg_color=bg_color,
+                )
 
             if self.human_gs:
                 self.human_gs.init_values["edges"] = self.human_gs.edges
@@ -312,6 +339,8 @@ class GaussianTrainer:
                 ),
                 bg_color=bg_color,
                 human_bg_color=human_bg_color,
+                viewpoint_cam=viewpoint_cam,
+                iteration = t_iter
             )
 
             loss.backward()
@@ -373,6 +402,7 @@ class GaussianTrainer:
                             radii=render_pkg["scene_radii"],
                             viewspace_point_tensor=render_pkg["scene_viewspace_points"],
                             iteration=(t_iter - self.cfg.scene.opt_start_iter) + 1,
+                            trainCameras=trainCameras
                         )
 
             if t_iter < self.cfg.human.densify_until_iter and self.cfg.mode in [
@@ -397,11 +427,6 @@ class GaussianTrainer:
             if self.human_gs:
                 self.human_gs.optimizer.step()
                 self.human_gs.optimizer.zero_grad(set_to_none=True)
-
-            if self.scene_gs and self.cfg.train.optim_scene:
-                if t_iter >= self.cfg.scene.opt_start_iter:
-                    self.scene_gs.optimizer.step()
-                    self.scene_gs.optimizer.zero_grad(set_to_none=True)
 
             # save checkpoint
             if (t_iter % self.cfg.train.save_ckpt_interval == 0 and t_iter > 0) or (
@@ -455,6 +480,17 @@ class GaussianTrainer:
                 and self.cfg.mode in ["human", "human_scene"]
             ):
                 self.render_canonical(t_iter, nframes=2, is_train_progress=True)
+            
+            if self.scene_gs and t_iter % 100 == 0 and t_iter > self.cfg.scene.densify_until_iter:
+                if t_iter < self.cfg.train.num_steps - 100:
+                    # don't update in the end of training
+                    self.scene_gs.compute_3D_filter(cameras=trainCameras) 
+
+            # Optimizer step
+            if self.scene_gs and self.cfg.train.optim_scene:
+                if t_iter >= self.cfg.scene.opt_start_iter:
+                    self.scene_gs.optimizer.step()
+                    self.scene_gs.optimizer.zero_grad(set_to_none=True)
 
         # train progress images
         if self.cfg.train.save_progress_images:
@@ -480,7 +516,7 @@ class GaussianTrainer:
         logger.info(f"Saved checkpoint {iter_s}")
 
     def scene_densification(
-        self, visibility_filter, radii, viewspace_point_tensor, iteration
+        self, visibility_filter, radii, viewspace_point_tensor, iteration, trainCameras
     ):
         self.scene_gs.max_radii2D[visibility_filter] = torch.max(
             self.scene_gs.max_radii2D[visibility_filter], radii[visibility_filter]
@@ -501,6 +537,7 @@ class GaussianTrainer:
                 max_screen_size=size_threshold,
                 max_n_gs=self.cfg.scene.max_n_gaussians,
             )
+            self.scene_gs.compute_3D_filter(cameras=trainCameras)
 
         is_white = self.bg_color.sum().item() == 3.0
 

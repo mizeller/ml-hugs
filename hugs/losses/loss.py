@@ -68,12 +68,12 @@ class HumanSceneLoss(nn.Module):
         self, 
         data, 
         render_pkg,
-        viewpoint_cam,
         human_gs_out,
         render_mode, 
         human_gs_init_values=None,
         bg_color=None,
         human_bg_color=None,
+        viewpoint_cam=None,
         iteration: int = None
     ):
         loss_dict = {}
