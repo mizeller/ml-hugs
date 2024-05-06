@@ -653,18 +653,15 @@ class SceneGS:
         grads[grads.isnan()] = 0.0
 
         max_n_gs = max_n_gs if max_n_gs else self.get_xyz.shape[0] + 1
-        
+        logger.warning(f"Max N_Gaussians vs N_Gaussians:\t{max_n_gs} vs. {self.get_xyz.shape[0]}") 
         if self.get_xyz.shape[0] <= max_n_gs:
             grads_abs = self.xyz_gradient_accum_abs / self.denom
             grads_abs[grads_abs.isnan()] = 0.0
             ratio = (torch.norm(grads, dim=-1) >= max_grad).float().mean()
             Q = torch.quantile(grads_abs.reshape(-1), 1 - ratio)
             
-            before = self._xyz.shape[0]
             self.densify_and_clone(grads, max_grad, grads_abs, Q, extent)
-            clone = self._xyz.shape[0]
             self.densify_and_split(grads, max_grad, grads_abs, Q, extent)
-            split = self._xyz.shape[0]
  
         prune_mask = (self.get_opacity < min_opacity).squeeze()
         if max_screen_size:
@@ -673,9 +670,6 @@ class SceneGS:
             prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
         
         self.prune_points(prune_mask)
-        prune = self._xyz.shape[0]
-        # torch.cuda.empty_cache()
-        return clone - before, split - clone, split - prune
 
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         # self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[:update_filter.shape[0]][update_filter,:2], dim=-1, keepdim=True)
@@ -684,19 +678,3 @@ class SceneGS:
         self.xyz_gradient_accum_abs[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,2:], dim=-1, keepdim=True)
         self.xyz_gradient_accum_abs_max[update_filter] = torch.max(self.xyz_gradient_accum_abs_max[update_filter], torch.norm(viewspace_point_tensor.grad[update_filter,2:], dim=-1, keepdim=True))
         self.denom[update_filter] += 1
-       
-    def forward(self):
-        # TODO: return the appearance embedding as well
-        gs_scales = self.scaling_activation(self._scaling)
-        gs_rotation = self.rotation_activation(self._rotation)
-        gs_xyz = self._xyz
-        gs_opacity = self.get_opacity
-        gs_features = self.get_features
-        return {
-            'xyz': gs_xyz,
-            'scales': gs_scales,
-            'rotq': gs_rotation,
-            'shs': gs_features,
-            'opacity': gs_opacity,
-            'active_sh_degree': self.active_sh_degree,
-        } 

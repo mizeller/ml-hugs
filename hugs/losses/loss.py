@@ -13,7 +13,19 @@ from hugs.utils.sampler import PatchSampler
 from .utils import l1_loss, ssim
 from hugs.utils.depth_utils import depth_to_normal
 
-
+class ViewPointCamera:
+    def __init__(self, data):
+        self.image_width = data["image_width"]
+        self.image_height = data["image_height"]
+        self.FoVy = data["fovy"]
+        self.FoVx = data["fovx"]
+        self.znear = 0.01
+        self.zfar = 100.0
+        self.world_view_transform = data['world_view_transform']
+        self.full_proj_transform = data['full_proj_transform']
+        view_inv = torch.inverse(self.world_view_transform)
+        self.camera_center = view_inv[3][:3]
+    
 class HumanSceneLoss(nn.Module):
     def __init__(
         self,
@@ -73,9 +85,13 @@ class HumanSceneLoss(nn.Module):
         human_gs_init_values=None,
         bg_color=None,
         human_bg_color=None,
-        viewpoint_cam=None,
         iteration: int = None
     ):
+
+        # construct pseudo viewpoint_cam object to avoid 
+        # having to change all subsequent GOF function calls
+        viewpoint_cam = ViewPointCamera(data)
+
         loss_dict = {}
         extras_dict = {}
         

@@ -25,7 +25,6 @@ from hugs.losses.loss import HumanSceneLoss
 from hugs.models.hugs_trimlp import HUGS_TRIMLP
 from hugs.models.hugs_wo_trimlp import HUGS_WO_TRIMLP
 from hugs.models import SceneGS
-from hugs.utils.init_opt import optimize_init
 from hugs.utils.vis import save_ply
 from hugs.utils.image import psnr, save_image
 from hugs.utils.general import (
@@ -258,7 +257,6 @@ class GaussianTrainer:
         # GOF
         trainCameras = self.scene.getTrainCameras().copy()
         self.scene_gs.compute_3D_filter(cameras=trainCameras)
-        viewpoint_stack = None
 
         pbar = tqdm(range(self.cfg.train.num_steps + 1), desc="Training")
 
@@ -275,7 +273,6 @@ class GaussianTrainer:
             rnd_idx = next(rand_idx_iter)
             data = self.train_dataset[rnd_idx]
 
-            human_gs_out, scene_gs_out = None, None
 
             if self.human_gs:
                 human_gs_out = self.human_gs.forward(
@@ -285,16 +282,6 @@ class GaussianTrainer:
                     ext_tfs=None,
                 )
 
-            if self.scene_gs:
-                if t_iter >= self.cfg.scene.opt_start_iter:
-                    scene_gs_out = self.scene_gs.forward()
-                else:
-                    render_mode = "human"
-            
-            # Pick a random Camera; TODO: remove viewpoint_cam altogether in next refactor
-            if not viewpoint_stack:
-                viewpoint_stack = trainCameras
-            viewpoint_cam = viewpoint_stack.pop(random.randint(0, len(viewpoint_stack)-1))
 
             # pick a random data sample & render
             rnd_idx = next(rand_idx_iter)
@@ -312,17 +299,17 @@ class GaussianTrainer:
                 render_pkg = render_human_scene(
                                 data=data,
                                 human_gs_out=human_gs_out,
-                                scene_gs_out=scene_gs_out,
+                                scene_gs=self.scene_gs,
                                 bg_color=bg_color,
                                 human_bg_color=human_bg_color,
                                 render_mode=render_mode,
                                 render_human_separate=render_human_separate,
                             )
             else:
-                render_pkg = GOF_renderer.render(
-                    viewpoint_camera=viewpoint_cam, 
-                    gaussians=self.scene_gs, 
-                    bg_color=bg_color,
+                render_pkg = GOF_renderer.render_new(
+                    data=data,
+                    gaussians=self.scene_gs,
+                    bg_color=bg_color
                 )
 
             if self.human_gs:
@@ -331,14 +318,13 @@ class GaussianTrainer:
             loss, loss_dict, loss_extras = self.loss_fn(
                 data,
                 render_pkg,
-                human_gs_out,
+                None, # human_gs_out, # BUG: add the variable back later!
                 render_mode=render_mode,
                 human_gs_init_values=(
                     self.human_gs.init_values if self.human_gs else None
                 ),
                 bg_color=bg_color,
                 human_bg_color=human_bg_color,
-                viewpoint_cam=viewpoint_cam,
                 iteration = t_iter
             )
 
@@ -362,7 +348,7 @@ class GaussianTrainer:
             if t_iter == self.cfg.train.num_steps:
                 pbar.close()
 
-            if t_iter % 1000 == 0:
+            if t_iter % self.cfg.train.viz_interval == 0:
                 with torch.no_grad():
                     pred_img = loss_extras["pred_img"]
                     gt_img = loss_extras["gt_img"]
@@ -397,8 +383,8 @@ class GaussianTrainer:
                     sgrad_stds.append(sgrad_std.item())
                     with torch.no_grad():
                         self.scene_densification(
-                            visibility_filter=render_pkg["scene_visibility_filter"],
-                            radii=render_pkg["scene_radii"],
+                            visibility_filter=render_pkg["visibility_filter"],
+                            radii=render_pkg["radii"],
                             viewspace_point_tensor=render_pkg["scene_viewspace_points"],
                             iteration=(t_iter - self.cfg.scene.opt_start_iter) + 1,
                             trainCameras=trainCameras
@@ -587,7 +573,6 @@ class GaussianTrainer:
         metrics = {k: [] for k in metrics}
 
         for idx, data in enumerate(tqdm(self.val_dataset, desc="Validation")):
-            human_gs_out, scene_gs_out = None, None
             render_mode = self.cfg.mode
 
             if self.human_gs:
@@ -602,26 +587,28 @@ class GaussianTrainer:
                     ext_tfs=None,
                 )
 
+                # TODO: at this point, the GOF render method should be used as well..
+                render_pkg = render_human_scene(
+                    data=data,
+                    human_gs_out=human_gs_out,
+                    scene_gs=self.scene_gs,
+                    bg_color=bg_color,
+                    render_mode=render_mode,
+                )
+
+                gt_image = data["rgb"]
+
+                image = render_pkg["render"]
+            
             if self.scene_gs:
-                if iter is not None:
-                    if iter >= self.cfg.scene.opt_start_iter:
-                        scene_gs_out = self.scene_gs.forward()
-                    else:
-                        render_mode = "human"
-                else:
-                    scene_gs_out = self.scene_gs.forward()
+                render_pkg = GOF_renderer.render_new(
+                    data=data,
+                    gaussians=self.scene_gs,
+                    bg_color=bg_color
+                )
+                image = render_pkg["render"][:3, :, :]
+                gt_image = data["rgb"]            
 
-            render_pkg = render_human_scene(
-                data=data,
-                human_gs_out=human_gs_out,
-                scene_gs_out=scene_gs_out,
-                bg_color=bg_color,
-                render_mode=render_mode,
-            )
-
-            gt_image = data["rgb"]
-
-            image = render_pkg["render"]
             if self.cfg.dataset.name == "zju":
                 image = image * data["mask"]
                 gt_image = gt_image * data["mask"]
@@ -690,8 +677,6 @@ class GaussianTrainer:
         os.makedirs(f"{self.cfg.logdir}/anim/", exist_ok=True)
 
         for idx, data in enumerate(tqdm(self.anim_dataset, desc="Animation")):
-            human_gs_out, scene_gs_out = None, None
-
             if self.human_gs:
                 ext_tfs = (
                     data["manual_trans"],
@@ -709,18 +694,23 @@ class GaussianTrainer:
                     ext_tfs=ext_tfs,
                 )
 
-            if self.scene_gs:
-                scene_gs_out = self.scene_gs.forward()
 
-            render_pkg = render_human_scene(
-                data=data,
-                human_gs_out=human_gs_out,
-                scene_gs_out=scene_gs_out,
-                bg_color=self.bg_color,
-                render_mode=self.cfg.mode,
-            )
-
-            image = render_pkg["render"]
+            if self.cfg.mode == "scene": 
+                render_pkg = GOF_renderer.render_new(
+                    data=data,
+                    gaussians=self.scene_gs,
+                    bg_color=self.bg_color,
+                )
+                image = render_pkg["render"][:3, :, :]
+            else:
+                render_pkg = render_human_scene(
+                    data=data,
+                    human_gs_out=human_gs_out,
+                    scene_gs=self.scene_gs,
+                    bg_color=self.bg_color,
+                    render_mode=self.cfg.mode,
+                )
+                image = render_pkg["render"]
 
             torchvision.utils.save_image(image, f"{self.cfg.logdir}/anim/{idx:05d}.png")
 
@@ -773,8 +763,6 @@ class GaussianTrainer:
         )
 
         for idx in pbar:
-            human_gs_out, scene_gs_out = None, None
-
             cam_p = camera_params[idx]
             data = dict(static_smpl_params, **cam_p)
 
@@ -794,8 +782,8 @@ class GaussianTrainer:
                 scale_mod = 0.5
                 render_pkg = render_human_scene(
                     data=data,
-                    human_gs_out=human_gs_out,
-                    scene_gs_out=scene_gs_out,
+                    human_gs_out=human_gs_out if human_gs_out else None,
+                    scene_gs=self.scene_gs,
                     bg_color=self.bg_color,
                     render_mode="human",
                     scaling_modifier=scale_mod,
@@ -808,7 +796,7 @@ class GaussianTrainer:
                 render_pkg = render_human_scene(
                     data=data,
                     human_gs_out=human_gs_out,
-                    scene_gs_out=scene_gs_out,
+                    scene_gs=self.scene_gs,
                     bg_color=self.bg_color,
                     render_mode="human",
                 )
@@ -821,7 +809,7 @@ class GaussianTrainer:
                 render_pkg = render_human_scene(
                     data=data,
                     human_gs_out=human_gs_out,
-                    scene_gs_out=scene_gs_out,
+                    scene_gs=self.scene_gs,
                     bg_color=self.bg_color,
                     render_mode="human",
                 )
@@ -874,8 +862,6 @@ class GaussianTrainer:
 
         imgs = []
         for idx in pbar:
-            human_gs_out, scene_gs_out = None, None
-
             cam_p = camera_params[idx]
             data = dict(smpl_params, **cam_p)
 
@@ -907,7 +893,7 @@ class GaussianTrainer:
             render_pkg = render_human_scene(
                 data=data,
                 human_gs_out=human_gs_out,
-                scene_gs_out=scene_gs_out,
+                scene_gs=self.scene_gs,
                 bg_color=self.bg_color,
                 render_mode="human",
             )
