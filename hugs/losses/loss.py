@@ -22,7 +22,7 @@ class HumanSceneLoss(nn.Module):
         l_lpips_w=0.0,
         l_lbs_w=0.0,
         l_humansep_w=0.0,
-        l_dist_from_iter: int = 15000, # iter after which distortion is added to loss    
+        l_dist_from_iter: int = 15000, # iteration after which distortion is added to loss    
         l_dist_w=0.0, 
         l_depth_normal_from_iter: int = 15000, # iteration after which depth normal is added to loss
         l_depth_normal_w=0.0,
@@ -37,9 +37,9 @@ class HumanSceneLoss(nn.Module):
         self.l_l1_w = l_l1_w
         self.l_lpips_w = l_lpips_w
         self.l_lbs_w = l_lbs_w
-        self.l_dist_from = l_dist_from_iter
+        self.l_dist_from_iter = l_dist_from_iter
         self.l_dist_w = l_dist_w
-        self.l_depth_normal_from = l_depth_normal_from_iter
+        self.l_depth_normal_from_iter = l_depth_normal_from_iter
         self.l_depth_normal_w = l_depth_normal_w
         self.l_humansep_w = l_humansep_w
         self.use_patches = use_patches
