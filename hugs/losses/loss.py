@@ -22,6 +22,10 @@ class HumanSceneLoss(nn.Module):
         l_lpips_w=0.0,
         l_lbs_w=0.0,
         l_humansep_w=0.0,
+        l_dist_from_iter: int = 15000, # iter after which distortion is added to loss    
+        l_dist_w=0.0, 
+        l_depth_normal_from_iter: int = 15000, # iteration after which depth normal is added to loss
+        l_depth_normal_w=0.0,
         num_patches=4,
         patch_size=32,
         use_patches=True,
@@ -33,6 +37,10 @@ class HumanSceneLoss(nn.Module):
         self.l_l1_w = l_l1_w
         self.l_lpips_w = l_lpips_w
         self.l_lbs_w = l_lbs_w
+        self.l_dist_from = l_dist_from_iter
+        self.l_dist_w = l_dist_w
+        self.l_depth_normal_from = l_depth_normal_from_iter
+        self.l_depth_normal_w = l_depth_normal_w
         self.l_humansep_w = l_humansep_w
         self.use_patches = use_patches
         
@@ -173,7 +181,7 @@ class HumanSceneLoss(nn.Module):
         #       and depth normal consistency (initially only for scene rendering)
         if render_mode == 'scene':
             # depth distortion regularization
-            distortion_map = rendering[8, :, :] # TODO: figure out what dimension this is from the GOF renderer
+            distortion_map = rendering[8, :, :]
             distortion_map = self.get_edge_aware_distortion_map(gt_image, distortion_map)
             distortion_loss = distortion_map.mean()
             
@@ -193,8 +201,8 @@ class HumanSceneLoss(nn.Module):
             normal_error = 1 - (render_normal_world * depth_normal).sum(dim=0)
             depth_normal_loss = normal_error.mean()
             # TODO: add weights for additional terms to config file 
-            lambda_distortion = 100 if iteration >= 15000 else 0.0
-            lambda_depth_normal = 0.05 if iteration >= 15000 else 0.0        
+            lambda_distortion = 100 if iteration >= self.l_dist_from_iter else self.l_dist_w
+            lambda_depth_normal = 0.05 if iteration >= self.l_depth_normal_from_iter else self.l_depth_normal_w        
 
             # add new regularization terms to loss_dict 
             loss_dict['distortion'] = lambda_distortion * distortion_loss

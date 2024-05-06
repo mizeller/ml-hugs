@@ -220,6 +220,10 @@ class GaussianTrainer:
             self.loss_fn = HumanSceneLoss(
                 l_ssim_w=l.ssim_w,
                 l_l1_w=l.l1_w,
+                l_dist_w=l.dist_w,
+                l_dist_from_iter=l.dist_from_iter,
+                l_depth_normal_w=l.depth_normal_w,
+                l_depth_normal_from_iter=l.depth_normal_from_iter,
                 bg_color=self.bg_color,
             )
 
