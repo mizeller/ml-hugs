@@ -117,6 +117,13 @@ class HumanSceneLoss(nn.Module):
             mask = (1. - data['mask'].unsqueeze(0))
             gt_image = gt_image * mask
             pred_img = pred_img * mask
+ 
+            # if iteration == 100:
+            #     from torchvision.transforms import ToPILImage
+            #     ToPILImage()(mask.detach().cpu()).save('00_mask.png') # mask as it's in the file
+            #     ToPILImage()(1-mask.detach().cpu()).save('01_mask_inv.png') # mask as it's passed to l1_loss
+            #     ToPILImage()(gt_image.detach().cpu()).save('02_gt_image.png') # gt_image as it's passed to loss fns
+            #     ToPILImage()(pred_img.detach().cpu()).save('03_pred_img.png') # pred_img as it's passed to loss fns
             
             extras_dict['gt_img'] = gt_image
         else:

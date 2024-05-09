@@ -97,7 +97,6 @@ def L1_loss_appearance(image, gt_image, gaussians, view_idx, return_transformed_
         transformed_image = torch.nn.functional.interpolate(transformed_image, size=(origH, origW), mode="bilinear", align_corners=True)[0]
         return transformed_image
 
-
 class GaussianTrainer:
     def __init__(self, cfg) -> None:
         self.cfg = cfg
@@ -400,6 +399,10 @@ class GaussianTrainer:
                 os.makedirs(f"{self.cfg.logdir}/log_images", exist_ok = True)
                 torchvision.utils.save_image(image_to_show, f"{self.cfg.logdir}/log_images/{t_iter}.jpg")
 
+            # save pointcloud for subsequent mesh extraction
+            if (t_iter in [1000, 5_000, 15000]):
+                print("\n[ITER {}] Saving Gaussians".format(t_iter))
+                self.scene.save(t_iter)
             # ~~~~ save images (GOF way) ~~~~
 
             if t_iter % 10 == 0:
