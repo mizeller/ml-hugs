@@ -25,7 +25,6 @@ from hugs.losses.loss import HumanSceneLoss
 from hugs.models.hugs_trimlp import HUGS_TRIMLP
 from hugs.models.hugs_wo_trimlp import HUGS_WO_TRIMLP
 from hugs.models import SceneGS
-from hugs.utils.vis import save_ply
 from hugs.utils.image import psnr, save_image
 from hugs.utils.general import (
     RandomIndexIterator,
@@ -55,14 +54,12 @@ def get_train_dataset(cfg):
 
     return dataset
 
-
 def get_val_dataset(cfg):
     if cfg.dataset.name == "neuman":
         logger.info(f"Loading NeuMan dataset {cfg.dataset.seq}-val")
         dataset = NeumanDataset(cfg.dataset.seq, "val", cfg.mode)
 
     return dataset
-
 
 def get_anim_dataset(cfg):
     if cfg.dataset.name == "neuman":
@@ -72,7 +69,6 @@ def get_anim_dataset(cfg):
         dataset = None
 
     return dataset
-
 
 def L1_loss_appearance(image, gt_image, gaussians, view_idx, return_transformed_image=False):
     appearance_embedding = gaussians.get_apperance_embedding(view_idx)
@@ -107,55 +103,38 @@ class GaussianTrainer:
         self.val_dataset = get_val_dataset(cfg)
         self.anim_dataset = get_anim_dataset(cfg)
 
+        init_betas = self.val_dataset.cached_data[0]["betas"]
+        
         self.eval_metrics = {}
         self.lpips = LPIPS().to("cuda")
-        # get models
+
+        # init models
         self.human_gs, self.scene_gs = None, None
 
         if cfg.mode in ["human", "human_scene"]:
             if cfg.human.name == "hugs_wo_trimlp":
                 self.human_gs = HUGS_WO_TRIMLP(
-                    sh_degree=cfg.human.sh_degree,
-                    n_subdivision=cfg.human.n_subdivision,
-                    use_surface=cfg.human.use_surface,
-                    init_2d=cfg.human.init_2d,
-                    rotate_sh=cfg.human.rotate_sh,
-                    isotropic=cfg.human.isotropic,
-                    init_scale_multiplier=cfg.human.init_scale_multiplier,
+                    cfg=cfg.human,
+                    init_betas=init_betas,
+                    eval_mode=cfg.eval,
                 )
-                init_betas = torch.stack(
-                    [x["betas"] for x in self.train_dataset.cached_data], dim=0
-                )
-                self.human_gs.create_betas(init_betas[0], cfg.human.optim_betas)
-                self.human_gs.initialize()
             elif cfg.human.name == "hugs_trimlp":
-                init_betas = torch.stack(
-                    [x["betas"] for x in self.val_dataset.cached_data], dim=0
-                )
                 self.human_gs = HUGS_TRIMLP(
-                    sh_degree=cfg.human.sh_degree,
-                    n_subdivision=cfg.human.n_subdivision,
-                    use_surface=cfg.human.use_surface,
-                    init_2d=cfg.human.init_2d,
-                    rotate_sh=cfg.human.rotate_sh,
-                    isotropic=cfg.human.isotropic,
-                    init_scale_multiplier=cfg.human.init_scale_multiplier,
-                    n_features=32,
-                    use_deformer=cfg.human.use_deformer,
-                    disable_posedirs=cfg.human.disable_posedirs,
-                    triplane_res=cfg.human.triplane_res,
-                    betas=init_betas[0],
+                    cfg=cfg.human,
+                    init_betas=init_betas,
+                    eval_mode=cfg.eval,
                 )
-                self.human_gs.create_betas(init_betas[0], cfg.human.optim_betas)
-                if not cfg.eval:
-                    self.human_gs = self.human_gs.initialize()
+            else:
+                raise ValueError(f"Unknown human model {cfg.human.name}")
+            
+            self.scene = Scene(self.cfg, self.train_dataset, self.human_gs) 
 
         if cfg.mode in ["scene", "human_scene"]:
             self.scene_gs = SceneGS(
                 sh_degree=cfg.scene.sh_degree,
             )
             # init scene object for to use GOF's loss terms
-            self.scene= Scene(self.cfg, self.train_dataset, self.scene_gs)
+            self.scene = Scene(self.cfg, self.train_dataset, self.scene_gs)
 
         # setup the optimizers
         if self.human_gs:
@@ -171,6 +150,12 @@ class GaussianTrainer:
                     ckpt = torch.load(ckpt_files[-1])
                     self.human_gs.load_state_dict(ckpt)
                     logger.info(f"Loaded human model from {ckpt_files[-1]}")
+                else:
+                    print("Pseudo-Not-Implemented Error")
+                    # raise NotImplementedError, "Implement the create_from_pcd() method in HUGS_TRIMLP class!!"
+                #     pcd = self.train_dataset.init_pcd
+                #     spatial_lr_scale = self.train_dataset.radius
+                #     self.human_gs.create_from_pcd(pcd, spatial_lr_scale)
 
             if not cfg.eval:
                 init_smpl_global_orient = torch.stack(
@@ -182,16 +167,13 @@ class GaussianTrainer:
                 init_smpl_trans = torch.stack(
                     [x["transl"] for x in self.train_dataset.cached_data], dim=0
                 )
-                init_betas = torch.stack(
-                    [x["betas"] for x in self.train_dataset.cached_data], dim=0
-                )
                 init_eps_offsets = torch.zeros(
                     (len(self.train_dataset), self.human_gs.n_gs, 3),
                     dtype=torch.float32,
                     device="cuda",
                 )
 
-                self.human_gs.create_betas(init_betas[0], cfg.human.optim_betas)
+                self.human_gs.create_betas(init_betas, cfg.human.optim_betas)
 
                 self.human_gs.create_body_pose(
                     init_smpl_body_pose, cfg.human.optim_pose
@@ -207,13 +189,13 @@ class GaussianTrainer:
             logger.info(self.scene_gs)
             if cfg.scene.ckpt:
                 ckpt = torch.load(cfg.scene.ckpt)
-                self.scene_gs.restore(ckpt, cfg.scene.lr)
+                self.scene_gs.load_state_dict(ckpt, cfg.scene.lr)
                 logger.info(f"Loaded scene model from {cfg.scene.ckpt}")
             else:
                 ckpt_files = sorted(glob.glob(f"{cfg.logdir_ckpt}/*scene*.pth"))
                 if len(ckpt_files) > 0:
                     ckpt = torch.load(ckpt_files[-1])
-                    self.scene_gs.restore(ckpt, cfg.scene.lr)
+                    self.scene_gs.load_state_dict(ckpt, cfg.scene.lr)
                     logger.info(f"Loaded scene model from {cfg.scene.ckpt}")
                 else:
                     pcd = self.train_dataset.init_pcd
@@ -275,14 +257,17 @@ class GaussianTrainer:
             )
 
     def train(self):
-        if self.human_gs:
-            self.human_gs.train()
-
+        
         # GOF
         trainCameras = self.scene.getTrainCameras().copy()
         for idx, camera in enumerate(self.scene.getTrainCameras()):
             camera.idx = idx
-        self.scene_gs.compute_3D_filter(cameras=trainCameras)
+        
+        # init 3D_filter attr for scene & human gaussian splats
+        if self.scene_gs:
+            self.scene_gs.compute_3D_filter(cameras=trainCameras)
+        if self.human_gs:
+            self.human_gs.compute_3D_filter(cameras=trainCameras)
 
         pbar = tqdm(range(self.cfg.train.num_steps + 1), desc="Training")
 
@@ -357,6 +342,7 @@ class GaussianTrainer:
             loss_dict["loss"] = loss
 
             # ~~~~ save images (GOF way) ~~~~
+            # TODO: extend this method to handle the different cases of HUGS
             is_save_images = True
             if is_save_images and (t_iter % self.cfg.scene.densification_interval == 0):
                 with torch.no_grad():
@@ -502,7 +488,7 @@ class GaussianTrainer:
                         f"{self.cfg.logdir}/meshes/scene_{t_iter:06d}_splat.ply"
                     )
                 if self.human_gs:
-                    save_ply(
+                    self.human_gs.save_ply(
                         human_gs_out,
                         f"{self.cfg.logdir}/meshes/human_{t_iter:06d}_splat.ply",
                     )
@@ -516,7 +502,7 @@ class GaussianTrainer:
                 and self.cfg.train.anim_interval > 0
             ):
                 if self.human_gs:
-                    save_ply(
+                    self.human_gs.save_ply(
                         human_gs_out,
                         f"{self.cfg.logdir}/meshes/human_{t_iter:06d}_splat.ply",
                     )
@@ -907,4 +893,3 @@ class GaussianTrainer:
         create_video(f"{self.cfg.logdir}/canon/", video_fname, fps=10)
         shutil.rmtree(f"{self.cfg.logdir}/canon/")
         os.makedirs(f"{self.cfg.logdir}/canon/")
- 
