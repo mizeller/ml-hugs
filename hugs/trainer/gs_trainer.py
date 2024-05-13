@@ -291,10 +291,7 @@ class GaussianTrainer:
                     is_train=True,
                     ext_tfs=None,
                 )
-
-            # pick a random data sample & render
-            rnd_idx = next(rand_idx_iter)
-            data = self.train_dataset[rnd_idx]
+            
             bg_color = torch.rand(3, dtype=torch.float32, device="cuda")
 
             if self.cfg.human.loss.humansep_w > 0.0 and render_mode == "human_scene":
