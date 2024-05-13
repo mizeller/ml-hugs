@@ -283,3 +283,16 @@ class GaussianModel(ABC):
         if not exclude_filter:
             l.append('filter_3D')
         return l
+
+    def prune_points(self, mask):
+        valid_points_mask = ~mask
+        optimizable_tensors = self._prune_optimizer(valid_points_mask)
+
+        # Update common attributes
+        self._xyz = optimizable_tensors["xyz"]
+        self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
+        self.denom = self.denom[valid_points_mask]
+        self.max_radii2D = self.max_radii2D[valid_points_mask]
+
+        # Update specific attributes
+        self.update_specific_attributes(optimizable_tensors, valid_points_mask)

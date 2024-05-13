@@ -94,11 +94,7 @@ class SceneGS(GaussianModel):
         self.setup_optimizer(cfg)
         self.xyz_gradient_accum = xyz_gradient_accum
         self.denom = denom
-        try:
-            self.optimizer.load_state_dict(opt_dict)
-        except ValueError as e:
-            logger.warning(f"Optimizer load failed: {e}")
-            logger.warning("Continue without a pretrained optimizer")
+        self.optimizer.load_state_dict(opt_dict)
     
     @property
     def get_scaling(self):
@@ -403,12 +399,13 @@ class SceneGS(GaussianModel):
         padded_grad = torch.zeros((n_init_points), device="cuda")
         padded_grad[:grads.shape[0]] = grads.squeeze()
         selected_pts_mask = torch.where(padded_grad >= grad_threshold, True, False)
+        selected_pts_mask = torch.logical_and(selected_pts_mask,
+                                              torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
+
         padded_grad_abs = torch.zeros((n_init_points), device="cuda")
         padded_grad_abs[:grads_abs.shape[0]] = grads_abs.squeeze()
         selected_pts_mask_abs = torch.where(padded_grad_abs >= grad_abs_threshold, True, False)
         selected_pts_mask = torch.logical_or(selected_pts_mask, selected_pts_mask_abs)
-        selected_pts_mask = torch.logical_and(selected_pts_mask,
-                                              torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
 
         stds = self.get_scaling[selected_pts_mask].repeat(N,1)
         means =torch.zeros((stds.size(0), 3),device="cuda")
