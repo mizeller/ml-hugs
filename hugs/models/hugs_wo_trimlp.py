@@ -541,15 +541,18 @@ class HUGS_WO_TRIMLP(GaussianModel):
     def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size, max_n_gs=None):
         grads = self.xyz_gradient_accum / self.denom
         grads[grads.isnan()] = 0.0
-        
-        max_n_gs = max_n_gs if max_n_gs else self.get_xyz.shape[0] + 1
-       
-        logger.warning(f"Max N_Gaussians vs N_Gaussians:\t{max_n_gs} vs. {self.get_xyz.shape[0]}")
-         
-        if self.get_xyz.shape[0] <= max_n_gs:
-            self.densify_and_clone(grads, max_grad, extent)
-            self.densify_and_split(grads, max_grad, extent)
 
+        max_n_gs = max_n_gs if max_n_gs else self.get_xyz.shape[0] + 1
+        logger.warning(f"Max N_Gaussians vs N_Gaussians:\t{max_n_gs} vs. {self.get_xyz.shape[0]}") 
+        if self.get_xyz.shape[0] <= max_n_gs:
+            grads_abs = self.xyz_gradient_accum_abs / self.denom
+            grads_abs[grads_abs.isnan()] = 0.0
+            ratio = (torch.norm(grads, dim=-1) >= max_grad).float().mean()
+            Q = torch.quantile(grads_abs.reshape(-1), 1 - ratio)
+            
+            self.densify_and_clone(grads, max_grad, grads_abs, Q, extent)
+            self.densify_and_split(grads, max_grad, grads_abs, Q, extent)
+ 
         prune_mask = (self.get_opacity < min_opacity).squeeze()
         if max_screen_size:
             big_points_vs = self.max_radii2D > max_screen_size
