@@ -167,13 +167,6 @@ class GaussianTrainer:
                 init_smpl_trans = torch.stack(
                     [x["transl"] for x in self.train_dataset.cached_data], dim=0
                 )
-                init_eps_offsets = torch.zeros(
-                    (len(self.train_dataset), self.human_gs.n_gs, 3),
-                    dtype=torch.float32,
-                    device="cuda",
-                )
-
-                self.human_gs.create_betas(init_betas, cfg.human.optim_betas)
 
                 self.human_gs.create_body_pose(
                     init_smpl_body_pose, cfg.human.optim_pose
@@ -183,7 +176,6 @@ class GaussianTrainer:
                 )
                 self.human_gs.create_transl(init_smpl_trans, cfg.human.optim_trans)
 
-                self.human_gs.setup_optimizer(cfg=cfg.human.lr)
 
         if self.scene_gs:
             logger.info(self.scene_gs)
@@ -294,7 +286,7 @@ class GaussianTrainer:
             
             bg_color = torch.rand(3, dtype=torch.float32, device="cuda")
 
-            if self.cfg.human.loss.humansep_w > 0.0 and render_mode == "human_scene":
+            if self.cfg.human.loss.humansep_w > 0.0 and render_mode == 'human_scene':
                 render_human_separate = True
                 human_bg_color = torch.rand(3, dtype=torch.float32, device="cuda")
             else:
@@ -339,55 +331,56 @@ class GaussianTrainer:
             loss_dict["loss"] = loss
 
             # ~~~~ save images (GOF way) ~~~~
-            # TODO: extend this method to handle the different cases of HUGS
-            is_save_images = True
-            if is_save_images and (t_iter % self.cfg.scene.densification_interval == 0):
-                with torch.no_grad():
-                    eval_cam = trainCameras[random.randint(0, len(trainCameras) -1)]
-                    rendering = GOF_renderer.render(eval_cam, self.scene_gs, bg_color)["render"]
-                    image = rendering[:3, :, :]
-                    transformed_image = L1_loss_appearance(image, eval_cam.original_image.cuda(), self.scene_gs, eval_cam.idx, return_transformed_image=True)
-                    normal = rendering[3:6, :, :]
-                    normal = torch.nn.functional.normalize(normal, p=2, dim=0)
+            if render_mode in ["scene"]: # TODO: add human
+                # TODO: extend this method to handle the different cases of HUGS
+                gaussians = self.human_gs if self.human_gs else self.scene_gs
+                is_save_images = False
+                if is_save_images and (t_iter % self.cfg.scene.densification_interval == 0):
+                    with torch.no_grad():
+                        eval_cam = trainCameras[random.randint(0, len(trainCameras) -1)]
+                        rendering = GOF_renderer.render(eval_cam, gaussians, bg_color)["render"]
+                        image = rendering[:3, :, :]
+                        transformed_image = L1_loss_appearance(image, eval_cam.original_image.cuda(), gaussians, eval_cam.idx, return_transformed_image=True)
+                        normal = rendering[3:6, :, :]
+                        normal = torch.nn.functional.normalize(normal, p=2, dim=0)
+                        
+                    # transform to world space
+                    c2w = (eval_cam.world_view_transform.T).inverse()
+                    normal2 = c2w[:3, :3] @ normal.reshape(3, -1)
+                    normal = normal2.reshape(3, *normal.shape[1:])
+                    normal = (normal + 1.) / 2.
                     
-                # transform to world space
-                c2w = (eval_cam.world_view_transform.T).inverse()
-                normal2 = c2w[:3, :3] @ normal.reshape(3, -1)
-                normal = normal2.reshape(3, *normal.shape[1:])
-                normal = (normal + 1.) / 2.
+                    depth = rendering[6, :, :]
+                    depth_normal, _ = depth_to_normal(eval_cam, depth[None, ...])
+                    depth_normal = (depth_normal + 1.) / 2.
+                    depth_normal = depth_normal.permute(2, 0, 1)
+                    
+                    gt_image = eval_cam.original_image.cuda()
+                    
+                    depth_map = apply_depth_colormap(depth[..., None], rendering[7, :, :, None], near_plane=None, far_plane=None)
+                    depth_map = depth_map.permute(2, 0, 1)
+                    
+                    accumlated_alpha = rendering[7, :, :, None]
+                    colored_accum_alpha = apply_depth_colormap(accumlated_alpha, None, near_plane=0.0, far_plane=1.0)
+                    colored_accum_alpha = colored_accum_alpha.permute(2, 0, 1)
+                    
+                    distortion_map = rendering[8, :, :]
+                    distortion_map = colormap(distortion_map.detach().cpu().numpy()).to(normal.device)
                 
-                depth = rendering[6, :, :]
-                depth_normal, _ = depth_to_normal(eval_cam, depth[None, ...])
-                depth_normal = (depth_normal + 1.) / 2.
-                depth_normal = depth_normal.permute(2, 0, 1)
-                
-                gt_image = eval_cam.original_image.cuda()
-                
-                depth_map = apply_depth_colormap(depth[..., None], rendering[7, :, :, None], near_plane=None, far_plane=None)
-                depth_map = depth_map.permute(2, 0, 1)
-                
-                accumlated_alpha = rendering[7, :, :, None]
-                colored_accum_alpha = apply_depth_colormap(accumlated_alpha, None, near_plane=0.0, far_plane=1.0)
-                colored_accum_alpha = colored_accum_alpha.permute(2, 0, 1)
-                
-                distortion_map = rendering[8, :, :]
-                distortion_map = colormap(distortion_map.detach().cpu().numpy()).to(normal.device)
-            
-                row0 = torch.cat([gt_image, image, depth_normal, normal], dim=2)
-                row1 = torch.cat([depth_map, colored_accum_alpha, distortion_map, transformed_image], dim=2)
-                
-                image_to_show = torch.cat([row0, row1], dim=1)
-                image_to_show = torch.clamp(image_to_show, 0, 1)
-                
-                os.makedirs(f"{self.cfg.logdir}/log_images", exist_ok = True)
-                torchvision.utils.save_image(image_to_show, f"{self.cfg.logdir}/log_images/{t_iter}.jpg")
+                    row0 = torch.cat([gt_image, image, depth_normal, normal], dim=2)
+                    row1 = torch.cat([depth_map, colored_accum_alpha, distortion_map, transformed_image], dim=2)
+                    
+                    image_to_show = torch.cat([row0, row1], dim=1)
+                    image_to_show = torch.clamp(image_to_show, 0, 1)
+                    
+                    os.makedirs(f"{self.cfg.logdir}/log_images", exist_ok = True)
+                    torchvision.utils.save_image(image_to_show, f"{self.cfg.logdir}/log_images/{t_iter}.jpg")
 
-            # save pointcloud for subsequent mesh extraction
-            if (t_iter in [1000, 5_000, 15000]):
-                print("\n[ITER {}] Saving Gaussians".format(t_iter))
-                self.scene.save(t_iter)
+                # save pointcloud for subsequent mesh extraction
+                if render_mode == "scene" and t_iter in [1_000, 5_000, 15_000]:
+                    print("\n[ITER {}] Saving Gaussians".format(t_iter))
+                    self.scene.save(t_iter)
             # ~~~~ save images (GOF way) ~~~~
-
             if t_iter % 10 == 0:
                 postfix_dict = {
                     "#hp": f"{self.human_gs.n_gs/1000 if self.human_gs else 0:.1f}K",
@@ -404,7 +397,7 @@ class GaussianTrainer:
             if t_iter == self.cfg.train.num_steps:
                 pbar.close()
 
-            if t_iter % self.cfg.train.viz_interval == 0:
+            if t_iter % 10 == 0: # NOTE: change viz_interval here
                 with torch.no_grad():
                     pred_img = loss_extras["pred_img"]
                     gt_img = loss_extras["gt_img"]
@@ -510,10 +503,8 @@ class GaussianTrainer:
                     self.render_canonical(t_iter, nframes=self.cfg.human.canon_nframes)
 
             if t_iter % 1000 == 0 and t_iter > 0:
-                if self.human_gs:
-                    self.human_gs.oneupSHdegree()
-                if self.scene_gs:
-                    self.scene_gs.oneupSHdegree()
+                if self.human_gs: self.human_gs.oneupSHdegree()
+                if self.scene_gs: self.scene_gs.oneupSHdegree()
 
             if (
                 self.cfg.train.save_progress_images
@@ -588,13 +579,12 @@ class GaussianTrainer:
             logger.info(f"[{iteration:06d}] Resetting opacity!!!")
             self.scene_gs.reset_opacity()
 
-    def human_densification(
-        self, human_gs_out, visibility_filter, radii, viewspace_point_tensor, iteration
-    ):
+    def human_densification(self, human_gs_out, visibility_filter, radii, viewspace_point_tensor, iteration):
         self.human_gs.max_radii2D[visibility_filter] = torch.max(
-            self.human_gs.max_radii2D[visibility_filter], radii[visibility_filter]
+            self.human_gs.max_radii2D[visibility_filter], 
+            radii[visibility_filter]
         )
-
+        
         self.human_gs.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
         if (
@@ -603,10 +593,8 @@ class GaussianTrainer:
         ):
             size_threshold = 20
             self.human_gs.densify_and_prune(
-                human_gs_out,
-                self.cfg.human.densify_grad_threshold,
-                min_opacity=self.cfg.human.prune_min_opacity,
-                extent=self.cfg.human.densify_extent,
+                min_opacity=self.cfg.human.prune_min_opacity, 
+                extent=self.cfg.human.densify_extent, 
                 max_screen_size=size_threshold,
                 max_n_gs=self.cfg.human.max_n_gaussians,
             )
@@ -617,9 +605,6 @@ class GaussianTrainer:
         iter_s = "final" if iter is None else f"{iter:06d}"
 
         bg_color = torch.zeros(3, dtype=torch.float32, device="cuda")
-
-        if self.human_gs:
-            self.human_gs.eval()
 
         methods = ["hugs", "hugs_human"]
         metrics = ["lpips", "psnr", "ssim"]
@@ -727,8 +712,6 @@ class GaussianTrainer:
             return 0
 
         iter_s = "final" if iter is None else f"{iter:06d}"
-        if self.human_gs:
-            self.human_gs.eval()
 
         os.makedirs(f"{self.cfg.logdir}/anim/", exist_ok=True)
 
@@ -782,9 +765,6 @@ class GaussianTrainer:
     ):
         iter_s = "final" if iter is None else f"{iter:06d}"
         iter_s += f"_{pose_type}" if pose_type is not None else ""
-
-        if self.human_gs:
-            self.human_gs.eval()
 
         os.makedirs(f"{self.cfg.logdir}/canon/", exist_ok=True)
 
