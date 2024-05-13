@@ -252,8 +252,15 @@ class GaussianTrainer:
         
         # GOF
         trainCameras = self.scene.getTrainCameras().copy()
-        for idx, camera in enumerate(self.scene.getTrainCameras()):
-            camera.idx = idx
+        # the indices in valid_train_cams are camera objects, for which corresponding
+        # objects exist in self.train_dataset or self.val_dataset. only sample cam views
+        # from these cameras to compare different render() implementations
+        valid_train_cams = [] 
+        for i, cam in enumerate(trainCameras):
+            cam.idx = int(cam.image_name) 
+            cam_idx_in_dataset = (cam.idx in self.train_dataset.train_split or cam.idx in self.train_dataset.val_split) 
+            if cam_idx_in_dataset:
+                valid_train_cams.append(i)
         
         # init 3D_filter attr for scene & human gaussian splats
         if self.scene_gs:
@@ -336,9 +343,9 @@ class GaussianTrainer:
                 is_save_images = True
                 if is_save_images and (t_iter % 50 == 0):
                     with torch.no_grad():
-                        from torchvision.transforms import ToPILImage
+                        # from torchvision.transforms import ToPILImage
                         # pick random view for evaluation (train/val img)
-                        eval_cam_idx = random.choice(self.train_dataset.train_split) # should actually be self.val_dataset here I think
+                        eval_cam_idx = random.choice(valid_train_cams)
                         eval_cam = trainCameras[eval_cam_idx]
                         print(f"Evaluating view/data: {int(eval_cam.image_name)}")
                         # ToPILImage()(eval_cam.original_image.detach().cpu()).save('eval_cam_image.png')

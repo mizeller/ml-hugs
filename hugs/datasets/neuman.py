@@ -224,7 +224,7 @@ class NeumanDataset(torch.utils.data.Dataset):
             caps = rendering_caps(seq, nframes, scene)
             scene.captures = caps
         else:
-            self.train_split, _, self.val_split = get_data_splits(scene)
+            self.train_split, self.val_split, self.test_split= get_data_splits(scene) # BUG: get_data_splits returns train, val, test
         
         self.scene = scene
         
