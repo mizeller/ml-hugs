@@ -33,6 +33,8 @@ from hugs.models.gaussian_model import GaussianModel
 
 class SceneGS(GaussianModel):
     def __init__(self, sh_degree: int):
+        self.type: str = "scene"
+        self.name: str = "SceneGS"
         self.active_sh_degree = 0
         self.max_sh_degree = sh_degree  
         self._xyz = torch.empty(0)
@@ -53,9 +55,13 @@ class SceneGS(GaussianModel):
         std = 1e-4
         self._appearance_embeddings = nn.Parameter(torch.empty(2048, 64).cuda())
         self._appearance_embeddings.data.normal_(0, std) 
+        self.non_densify_params_keys = [
+            "appearance_embeddings", 
+            "appearance_network"
+            ]
     
-    def state_dict(self):
-        save_dict = {
+    def capture(self):
+        state_dict = {
             'active_sh_degree': self.active_sh_degree,
             'xyz': self._xyz,
             'features_dc': self._features_dc,
@@ -69,7 +75,7 @@ class SceneGS(GaussianModel):
             'optimizer': self.optimizer.state_dict(),
             'spatial_lr_scale': self.spatial_lr_scale,
         }
-        return save_dict
+        return state_dict
     
     def restore(self, state_dict, cfg):
         self.active_sh_degree = state_dict['active_sh_degree']
@@ -88,33 +94,36 @@ class SceneGS(GaussianModel):
         self.setup_optimizer(cfg)
         self.xyz_gradient_accum = xyz_gradient_accum
         self.denom = denom
-        self.optimizer.load_state_dict(opt_dict)
-    
         try:
+            self.optimizer.load_state_dict(opt_dict)
+        except ValueError as e:
+            logger.warning(f"Optimizer load failed: {e}")
+            logger.warning("Continue without a pretrained optimizer")
     
     @property
     def get_scaling(self):
-        return self.scaling_activation(self._scaling)
+        return self.scaling_activation(self._scaling) # torch.Size([N_GAUSSIANS, 3])
    
-    
-    @property
+    # @property
     def get_rotation(self):
-        return self.rotation_activation(self._rotation)
-    
+        return self.rotation_activation(self._rotation) # torch.Size([N_GAUSSIANS, 4])
     
     @property
     def get_features(self):
         features_dc = self._features_dc
         features_rest = self._features_rest
-        return torch.cat((features_dc, features_rest), dim=1)
+        return torch.cat((features_dc, features_rest), dim=1) # torch.Size([N_GAUSSIANS, 16, 3])
     
     @property
     def get_opacity(self):
-        return self.opacity_activation(self._opacity)
+        return self.opacity_activation(self._opacity) # torch.Size([N_GAUSSIANS, 1])
+ 
     def get_covariance(self, scaling_modifier = 1):
-        return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
+        # NOTE: unused; unused; see hugs/gaussian_renderer/__init__()
+        return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation) # torch.Size([N_GAUSSIANS, 6])
 
     def get_view2gaussian(self, viewmatrix):
+        # NOTE: unused; see hugs/gaussian_renderer/__init__()
         """
         Taken from GOF; this method is (currently) unused 
         (because pipe.compute_view2gaussian_python is set to False per default).
@@ -388,7 +397,7 @@ class SceneGS(GaussianModel):
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
-    def densify_and_split(self, grads, grad_threshold,  grads_abs, grad_abs_threshold, scene_extent, N=2):
+    def densify_and_split(self, grads, grad_threshold, grads_abs, grad_abs_threshold, scene_extent, N=2):
         n_init_points = self.get_xyz.shape[0]
         # Extract points that satisfy the gradient condition
         padded_grad = torch.zeros((n_init_points), device="cuda")
@@ -411,18 +420,26 @@ class SceneGS(GaussianModel):
         new_features_dc = self._features_dc[selected_pts_mask].repeat(N,1,1)
         new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
         new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation)
+        self.densification_postfix(
+            new_xyz, 
+            new_features_dc, 
+            new_features_rest, 
+            new_opacity, 
+            new_scaling, 
+            new_rotation
+            )
 
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
         self.prune_points(prune_filter)
 
     def densify_and_clone(self, grads, grad_threshold, grads_abs, grad_abs_threshold, scene_extent):
         # Extract points that satisfy the gradient condition
-        selected_pts_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
+        grad_cond = torch.norm(grads, dim=-1) >= grad_threshold
+        scale_cond = torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent
+        selected_pts_mask = torch.where(grad_cond, True, False)
         selected_pts_mask_abs = torch.where(torch.norm(grads_abs, dim=-1) >= grad_abs_threshold, True, False)
         selected_pts_mask = torch.logical_or(selected_pts_mask, selected_pts_mask_abs)
-        selected_pts_mask = torch.logical_and(selected_pts_mask,
-                                              torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
+        selected_pts_mask = torch.logical_and(selected_pts_mask, scale_cond)
         
         new_xyz = self._xyz[selected_pts_mask]
         # sample a new gaussian instead of fixing position
