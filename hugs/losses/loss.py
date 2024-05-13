@@ -81,7 +81,7 @@ class HumanSceneLoss(nn.Module):
         self, 
         data, 
         render_pkg,
-        human_gs: GaussianModel,
+        human_gs, # TODO: fix this type (to GaussianModel), once the input is self.human_gs and not human_gs_out !!!
         render_mode, 
         human_gs_init_values=None,
         bg_color=None,
@@ -190,14 +190,14 @@ class HumanSceneLoss(nn.Module):
             loss_lpips_human = self.lpips(pred_patches.clip(max=1), gt_patches).mean()
             loss_dict['lpips_patch_human'] = self.l_lpips_w * loss_lpips_human * self.l_humansep_w
 
-        if self.l_lbs_w > 0.0 and human_gs_out['lbs_weights'] is not None and not render_mode == "scene":
-            if 'gt_lbs_weights' in human_gs_out.keys():
+        if self.l_lbs_w > 0.0 and human_gs.get_lbs_weights() is not None and not render_mode == "scene":
+            if hasattr(human_gs, 'gt_lbs_weights'): # this attr is set in the forward pass in HUGS_MLP
                 loss_lbs = F.mse_loss(
-                    human_gs_out['lbs_weights'], 
-                    human_gs_out['gt_lbs_weights'].detach()).mean()
+                    human_gs.get_lbs_weights(),
+                    human_gs.gt_lbs_weights.detach()).mean()
             else:
                 loss_lbs = F.mse_loss(
-                    human_gs_out['lbs_weights'], 
+                    human_gs.get_lbs_weights(),
                     human_gs_init_values['lbs_weights']).mean()
             loss_dict['lbs'] = self.l_lbs_w * loss_lbs
        

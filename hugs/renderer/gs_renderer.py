@@ -14,12 +14,12 @@ from diff_gaussian_rasterization import (
 )
 
 from hugs import gaussian_renderer as GOF_renderer
-from hugs.models.scene import SceneGS
+from hugs.models.gaussian_model import GaussianModel
 
 def render_human_scene(
     data, 
-    human_gs_out,
-    scene_gs: SceneGS,
+    human_gs, # TODO: fix type of this variable, once forward pass is removed in HUGS_WO_TRIMLP
+    scene_gs: GaussianModel,
     bg_color, 
     human_bg_color=None,
     scaling_modifier=1.0, 
@@ -29,12 +29,13 @@ def render_human_scene(
 
     feats = None
     if render_mode == 'human_scene': 
-        feats = torch.cat([human_gs_out['shs'], scene_gs['shs']], dim=0)
-        means3D = torch.cat([human_gs_out['xyz'], scene_gs['xyz']], dim=0)
-        opacity = torch.cat([human_gs_out['opacity'], scene_gs['opacity']], dim=0)
-        scales = torch.cat([human_gs_out['scales'], scene_gs['scales']], dim=0)
-        rotations = torch.cat([human_gs_out['rotq'], scene_gs['rotq']], dim=0)
-        active_sh_degree = human_gs_out['active_sh_degree']
+        # TODO: this case is not supported currently
+        feats = torch.cat([human_gs['shs'], scene_gs['shs']], dim=0)
+        means3D = torch.cat([human_gs['xyz'], scene_gs['xyz']], dim=0)
+        opacity = torch.cat([human_gs['opacity'], scene_gs['opacity']], dim=0)
+        scales = torch.cat([human_gs['scales'], scene_gs['scales']], dim=0)
+        rotations = torch.cat([human_gs['rotq'], scene_gs['rotq']], dim=0)
+        active_sh_degree = human_gs['active_sh_degree']
         render_pkg = render(
             means3D=means3D,
             feats=feats,
@@ -46,43 +47,56 @@ def render_human_scene(
             bg_color=bg_color,
             active_sh_degree=active_sh_degree,
         ) 
-
-    else: # NOTE: works for scene only rn; human only scenario breaks...
+    elif render_mode == 'human':
+        # TODO: use GOF_renderer.render_new instead of vanilla HUGS render method 
+        feats = human_gs['shs']
+        means3D = human_gs['xyz']
+        opacity = human_gs['opacity']
+        scales = human_gs['scales']
+        rotations = human_gs['rotq']
+        active_sh_degree = human_gs['active_sh_degree']
+        render_pkg = render(
+                means3D=means3D,
+                feats=feats,
+                opacity=opacity,
+                scales=scales,
+                rotations=rotations,
+                data=data,
+                scaling_modifier=scaling_modifier,
+                bg_color=bg_color,
+                active_sh_degree=active_sh_degree,
+            )
+    elif render_mode == "scene":
         render_pkg = GOF_renderer.render_new(data=data, gaussians=scene_gs, bg_color=bg_color)
-
+    else:
+        raise ValueError(f"Invalid render mode: {render_mode}")
         
     if render_human_separate and render_mode == 'human_scene':
         render_human_pkg = render(
-            means3D=human_gs_out['xyz'],
-            feats=human_gs_out['shs'],
-            opacity=human_gs_out['opacity'],
-            scales=human_gs_out['scales'],
-            rotations=human_gs_out['rotq'],
+            means3D=human_gs['xyz'],
+            feats=human_gs['shs'],
+            opacity=human_gs['opacity'],
+            scales=human_gs['scales'],
+            rotations=human_gs['rotq'],
             data=data,
             scaling_modifier=scaling_modifier,
             bg_color=human_bg_color if human_bg_color is not None else bg_color,
-            active_sh_degree=human_gs_out['active_sh_degree'],
+            active_sh_degree=human_gs['active_sh_degree'],
         )
         render_pkg['human_img'] = render_human_pkg['render']
         render_pkg['human_visibility_filter'] = render_human_pkg['visibility_filter']
         render_pkg['human_radii'] = render_human_pkg['radii']
-        
-    if render_mode == 'human':
-        render_pkg['human_visibility_filter'] = render_pkg['visibility_filter']
-        render_pkg['human_radii'] = render_pkg['radii']
-    elif render_mode == 'human_scene':
-        human_n_gs = human_gs_out['xyz'].shape[0]
+    
+    # TODO: check original HUGS to check previous implementation of this block
+    if render_mode == 'human_scene':
+        human_n_gs = human_gs['xyz'].shape[0]
         scene_n_gs = scene_gs['xyz'].shape[0]
         render_pkg['scene_visibility_filter'] = render_pkg['visibility_filter'][human_n_gs:]
         render_pkg['scene_radii'] = render_pkg['radii'][human_n_gs:]
         if not 'human_visibility_filter' in render_pkg.keys():
             render_pkg['human_visibility_filter'] = render_pkg['visibility_filter'][:-scene_n_gs]
             render_pkg['human_radii'] = render_pkg['radii'][:-scene_n_gs]
-            
-    elif render_mode == 'scene':
-        render_pkg['scene_visibility_filter'] = render_pkg['visibility_filter']
-        render_pkg['scene_radii'] = render_pkg['radii']
-        
+
     return render_pkg
     
     
@@ -108,12 +122,15 @@ def render(means3D, feats, opacity, scales, rotations, data, scaling_modifier=1.
     else:
         shs = feats
 
+    subpixel_offset = torch.zeros((int(data['image_height']), int(data['image_width']), 2), dtype=torch.float32, device="cuda")
     
     raster_settings = GaussianRasterizationSettings(
         image_height=int(data['image_height']),
         image_width=int(data['image_width']),
         tanfovx=tanfovx,
         tanfovy=tanfovy,
+        kernel_size=0.0,
+        subpixel_offset=subpixel_offset,
         bg=bg_color,
         scale_modifier=scaling_modifier,
         viewmatrix=data['world_view_transform'],

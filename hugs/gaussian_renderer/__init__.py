@@ -98,7 +98,7 @@ def render_new(data, gaussians: GaussianModel, bg_color, kernel_size: float = 0.
             "visibility_filter" : radii > 0,
             "radii": radii}
 
-def render(viewpoint_camera, gaussians: SceneGS , bg_color, kernel_size: float = 0.0, scaling_modifier = 1.0, subpixel_offset=None):
+def render(viewpoint_camera, gaussians: GaussianModel, bg_color, kernel_size: float = 0.0, scaling_modifier = 1.0, subpixel_offset=None):
     """
     Render the scene. 
     
