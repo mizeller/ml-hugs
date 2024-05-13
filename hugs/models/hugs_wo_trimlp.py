@@ -194,7 +194,7 @@ class HUGS_WO_TRIMLP(GaussianModel):
 
         # same for both human models 
         if not eval_mode:
-            self.human_gs = self.human_gs.initialize()
+            self.initialize()
     
     def capture(self):
         state_dict = {
@@ -306,7 +306,9 @@ class HUGS_WO_TRIMLP(GaussianModel):
         V2G = V2G.transpose(2, 1).contiguous()
         return V2G 
     
-    # `create_from_pcd()` not necessary for human case
+    # not necessary for human case
+    def create_from_pcd(self, pcd: BasicPointCloud, spatial_lr_scale: float):
+        pass
    
     def setup_optimizer(self, cfg):
         self.percent_dense = cfg.percent_dense
@@ -366,7 +368,7 @@ class HUGS_WO_TRIMLP(GaussianModel):
         dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
 
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
-        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation), axis=1)
+        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation, filter_3D), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
