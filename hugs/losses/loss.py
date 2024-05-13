@@ -12,6 +12,7 @@ from hugs.utils.sampler import PatchSampler
 
 from .utils import l1_loss, ssim
 from hugs.utils.depth_utils import depth_to_normal
+from hugs.models.gaussian_model import GaussianModel    
 
 class ViewPointCamera:
     def __init__(self, data):
@@ -80,7 +81,7 @@ class HumanSceneLoss(nn.Module):
         self, 
         data, 
         render_pkg,
-        human_gs_out,
+        human_gs: GaussianModel,
         render_mode, 
         human_gs_init_values=None,
         bg_color=None,
@@ -202,7 +203,7 @@ class HumanSceneLoss(nn.Module):
        
         # NOTE: add Gaussian Opacity Field regularizers here; i.e. depth distortion 
         #       and depth normal consistency (initially only for scene rendering)
-        if render_mode == 'scene':
+        if render_mode in ["scene", "human"]:
             # depth distortion regularization
             distortion_map = rendering[8, :, :]
             distortion_map = self.get_edge_aware_distortion_map(gt_image, distortion_map)
