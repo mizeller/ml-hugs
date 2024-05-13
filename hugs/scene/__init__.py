@@ -15,6 +15,7 @@ import json
 
 from hugs.scene.dataset_readers import readNeumanSceneInfo
 from hugs.utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
+from hugs.models.gaussian_model import GaussianModel
 
 class Scene:
     """
@@ -24,7 +25,7 @@ class Scene:
     def __init__(self, cfg, train_dataset, gaussians):
         self.model_path = cfg.logdir 
         self.train_dataset = train_dataset
-        self.gaussians = gaussians
+        self.gaussians: GaussianModel = gaussians
         self.cfg = cfg
         self.train_cameras = {}
         self.test_cameras = {}
@@ -45,7 +46,9 @@ class Scene:
         self.cameras_extent = scene_info.nerf_normalization["radius"]
         self.train_cameras[1.0] = cameraList_from_camInfos(scene_info.train_cameras, 1.0)
         
-        self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
+        # only init this for Scene for now (TODO) 
+        if self.gaussians.type == 'scene':
+            self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
 
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
