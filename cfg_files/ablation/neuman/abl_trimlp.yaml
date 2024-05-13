@@ -21,7 +21,6 @@ train:
   optim_scene: true
   save_progress_images: false
   progress_save_interval: 10
-  vis_interval: 10
 human:
   name: hugs_wo_trimlp
   ckpt: null

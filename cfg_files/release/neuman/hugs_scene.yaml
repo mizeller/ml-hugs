@@ -17,7 +17,6 @@ train:
   num_steps: 5000 # 15000
   save_ckpt_interval: 5000 # 15000
   val_interval: 1000
-  viz_interval: 1000 # 250 # interval at which training images are saved in train/ dir
   anim_interval: 2000 # 1000 # 15000
   optim_scene: true
   save_progress_images: false
