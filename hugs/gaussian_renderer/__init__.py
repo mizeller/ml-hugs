@@ -12,18 +12,17 @@
 import torch
 import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
-from hugs.models.scene import SceneGS
+from hugs.models.gaussian_model import GaussianModel
 
-def render_new(data, gaussians: SceneGS , bg_color, kernel_size: float = 0.0, scaling_modifier = 1.0, subpixel_offset=None):
+def render_new(data, gaussians: GaussianModel, bg_color, kernel_size: float = 0.0, scaling_modifier = 1.0, subpixel_offset=None):
     """
     Render the scene. This methods does not require the viewpoint_camera input param.
-    For now, gaussians is of type SceneGS
     """
 
     if bg_color is None:
         bg_color = torch.zeros(3, dtype=torch.float32, device="cuda")
  
-    assert isinstance(gaussians, SceneGS), "gaussians must be of type SceneGS" 
+    assert isinstance(gaussians, GaussianModel), "Gaussians must be of type GaussianModel!" 
 
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
     screenspace_points = torch.zeros_like(gaussians.get_xyz, dtype=gaussians.get_xyz.dtype, requires_grad=True, device="cuda")
@@ -73,7 +72,7 @@ def render_new(data, gaussians: SceneGS , bg_color, kernel_size: float = 0.0, sc
     cov3D_precomp =  None
     view2gaussian_precomp = None
     scales = gaussians.get_scaling_with_3D_filter
-    rotations = gaussians.get_rotation
+    rotations = gaussians.get_rotation()
 
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
@@ -148,7 +147,7 @@ def render(viewpoint_camera, gaussians: SceneGS , bg_color, kernel_size: float =
     cov3D_precomp = None # gaussians.get_covariance(scaling_modifier) # None
     view2gaussian_precomp = None # gaussians.get_view2gaussian(raster_settings.viewmatrix) # None
     scales = gaussians.get_scaling_with_3D_filter
-    rotations = gaussians.get_rotation
+    rotations = gaussians.get_rotation()
 
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
@@ -174,7 +173,7 @@ def render(viewpoint_camera, gaussians: SceneGS , bg_color, kernel_size: float =
             "visibility_filter" : radii > 0,
             "radii": radii}
 
-def integrate(points3D, viewpoint_camera, pc: SceneGS, bg_color : torch.Tensor, kernel_size: float, scaling_modifier = 1.0, subpixel_offset=None):
+def integrate(points3D, viewpoint_camera, pc: GaussianModel, bg_color : torch.Tensor, kernel_size: float, scaling_modifier = 1.0, subpixel_offset=None):
     """
     integrate Gaussians to the points, we also render the image for visual comparison. 
     
@@ -220,7 +219,7 @@ def integrate(points3D, viewpoint_camera, pc: SceneGS, bg_color : torch.Tensor, 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.
     scales = pc.get_scaling_with_3D_filter
-    rotations = pc.get_rotation
+    rotations = pc.get_rotation()
     cov3D_precomp =  None # pc.get_covariance(scaling_modifier)
     view2gaussian_precomp = None # pc.get_view2gaussian(raster_settings.viewmatrix)
 
