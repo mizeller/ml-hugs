@@ -372,7 +372,8 @@ class NeumanDataset(torch.utils.data.Dataset):
             "full_proj_transform": full_proj_transform,
             "camera_center": camera_center,
             "cam_intrinsics": cam_intrinsics,
-            
+            "img_path":  self.scene.captures[idx].image_path,
+            "img_idx": int(self.scene.captures[idx].image_path.split('/')[-1].split('.')[0]), 
             "betas": self.smpl_params["betas"][idx],
             "global_orient": self.smpl_params["global_orient"][idx],
             "body_pose": self.smpl_params["body_pose"][idx],

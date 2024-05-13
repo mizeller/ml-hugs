@@ -326,18 +326,59 @@ class GaussianTrainer:
             loss_dict["loss"] = loss
 
             # ~~~~ save images (GOF way) ~~~~
-            if render_mode in ["scene"]: # TODO: add human
+            if render_mode in ["scene", "human"]: # TODO: add human
                 # TODO: extend this method to handle the different cases of HUGS
-                gaussians = self.human_gs if self.human_gs else self.scene_gs
-                is_save_images = False
-                if is_save_images and (t_iter % self.cfg.scene.densification_interval == 0):
+                if render_mode == "human":
+                    gaussians = self.human_gs
+                if render_mode == "scene":
+                    gaussians = self.scene_gs
+
+                is_save_images = True
+                if is_save_images and (t_iter % 50 == 0):
                     with torch.no_grad():
-                        eval_cam = trainCameras[random.randint(0, len(trainCameras) -1)]
-                        rendering = GOF_renderer.render(eval_cam, gaussians, bg_color)["render"]
-                        image = rendering[:3, :, :]
-                        transformed_image = L1_loss_appearance(image, eval_cam.original_image.cuda(), gaussians, eval_cam.idx, return_transformed_image=True)
-                        normal = rendering[3:6, :, :]
-                        normal = torch.nn.functional.normalize(normal, p=2, dim=0)
+                        from torchvision.transforms import ToPILImage
+                        # pick random view for evaluation (train/val img)
+                        eval_cam_idx = random.choice(self.train_dataset.train_split) # should actually be self.val_dataset here I think
+                        eval_cam = trainCameras[eval_cam_idx]
+                        print(f"Evaluating view/data: {int(eval_cam.image_name)}")
+                        # ToPILImage()(eval_cam.original_image.detach().cpu()).save('eval_cam_image.png')
+                        if int(eval_cam.image_name) in self.train_dataset.train_split:
+                            eval_data_idx = self.train_dataset.train_split.index(int(eval_cam.image_name))
+                            eval_data = self.train_dataset[eval_data_idx]
+                        else:
+                            # image is form val set
+                            eval_data_idx = self.train_dataset.val_split.index(int(eval_cam.image_name))
+                            eval_data = self.val_dataset[eval_data_idx]
+                        # ToPILImage()(eval_data['rgb'].detach().cpu()).save('eval_data_image.png')
+
+                        assert torch.equal(eval_data['rgb'], eval_cam.original_image), "Image mismatch"
+                        
+                        if render_mode == "human":
+                            human_gs_out_eval = self.human_gs.forward(
+                                smpl_scale=eval_data["smpl_scale"][None],
+                                dataset_idx=eval_data_idx,
+                            )
+                            
+                            render_pkg_eval = render_human_scene(
+                                data=eval_data,
+                                human_gs=human_gs_out_eval, # not nice - TODO: replace w/ self.human_gs eventually 
+                                scene_gs=self.scene_gs,
+                                bg_color=bg_color,
+                                human_bg_color=human_bg_color,
+                                render_mode=render_mode,
+                                render_human_separate=render_human_separate,
+                            )
+                            rendering = render_pkg_eval["render"]
+                            image = rendering[:3, :, :]
+                            transformed_image = L1_loss_appearance(image, eval_cam.original_image.cuda(), gaussians, eval_cam.idx, return_transformed_image=True)
+                            normal = rendering[3:6, :, :]
+                            normal = torch.nn.functional.normalize(normal, p=2, dim=0)
+                        if render_mode == "scene":
+                            rendering = GOF_renderer.render(eval_cam, gaussians, bg_color)["render"]
+                            image = rendering[:3, :, :]
+                            transformed_image = L1_loss_appearance(image, eval_cam.original_image.cuda(), gaussians, eval_cam.idx, return_transformed_image=True)
+                            normal = rendering[3:6, :, :]
+                            normal = torch.nn.functional.normalize(normal, p=2, dim=0)
                         
                     # transform to world space
                     c2w = (eval_cam.world_view_transform.T).inverse()
