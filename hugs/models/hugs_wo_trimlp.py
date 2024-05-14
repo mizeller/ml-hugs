@@ -16,8 +16,6 @@ from hugs.utils.general import (
     inverse_sigmoid, 
     get_expon_lr_func, 
     build_rotation,
-    strip_symmetric,
-    build_scaling_rotation,
 )
 from hugs.utils.rotations import (
     axis_angle_to_rotation_6d, 
@@ -399,6 +397,7 @@ class HUGS_WO_TRIMLP(GaussianModel):
     
     # `reset_opacity()` not necessary for human case
 
+    # unused method
     def load_ply(self, path):
         plydata = PlyData.read(path)
 
@@ -604,7 +603,6 @@ class HUGS_WO_TRIMLP(GaussianModel):
         transl=None, 
         smpl_scale=None,
         dataset_idx=-1,
-        is_train=False,
         ext_tfs=None,
     ):
         gs_scales = self.scaling_activation(self._scaling)

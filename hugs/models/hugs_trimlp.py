@@ -46,10 +46,6 @@ from hugs.utils.graphics_utils import BasicPointCloud
 
 SCALE_Z = 1e-5
 
-
-   
-        
-
 class HUGS_TRIMLP(GaussianModel):
 
     def __init__(
@@ -375,7 +371,6 @@ class HUGS_TRIMLP(GaussianModel):
             max_steps=cfg.position_max_steps,
         )
 
-    # the previous code used this method for the human gs; 
     @torch.no_grad()
     def save_ply(self, path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -558,6 +553,7 @@ class HUGS_TRIMLP(GaussianModel):
         )
         self.denom[update_filter] += 1
 
+    # all methods below this line are specific for the human case ~~~~~~~~~~~~~~~~~~~~~~~~~~
     def create_body_pose(self, body_pose, requires_grad=False):
         body_pose = axis_angle_to_rotation_6d(body_pose.reshape(-1, 3)).reshape(
             -1, 23 * 6

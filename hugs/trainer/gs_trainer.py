@@ -289,7 +289,6 @@ class GaussianTrainer:
                 human_gs_out = self.human_gs.forward(
                     smpl_scale=data["smpl_scale"][None],
                     dataset_idx=rnd_idx,
-                    is_train=True,
                     ext_tfs=None,
                 )
             
@@ -664,7 +663,6 @@ class GaussianTrainer:
                     transl=data["transl"],
                     smpl_scale=data["smpl_scale"][None],
                     dataset_idx=-1,
-                    is_train=False,
                     ext_tfs=None,
                 )
 
@@ -769,7 +767,6 @@ class GaussianTrainer:
                     transl=data["transl"],
                     smpl_scale=data["smpl_scale"][None],
                     dataset_idx=-1,
-                    is_train=False,
                     ext_tfs=ext_tfs,
                 )
 
@@ -853,7 +850,6 @@ class GaussianTrainer:
                     transl=data["transl"],
                     smpl_scale=data["smpl_scale"],
                     dataset_idx=-1,
-                    is_train=False,
                     ext_tfs=None,
                 )
 
