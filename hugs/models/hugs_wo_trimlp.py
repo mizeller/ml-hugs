@@ -203,7 +203,7 @@ class HUGS_WO_TRIMLP(GaussianModel):
             'scaling': self._scaling,
             'rotation': self._rotation,
             'opacity': self._opacity,
-            'max_radii1D': self.max_radii2D,
+            'max_radii2D': self.max_radii2D,
             'xyz_gradient_accum': self.xyz_gradient_accum,
             'denom': self.denom,
             'optimizer': self.optimizer.state_dict(),

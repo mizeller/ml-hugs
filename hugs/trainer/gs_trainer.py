@@ -142,13 +142,13 @@ class GaussianTrainer:
             logger.info(self.human_gs)
             if cfg.human.ckpt:
                 # load_human_ckpt(self.human_gs, cfg.human.ckpt)
-                self.human_gs.load_state_dict(torch.load(cfg.human.ckpt))
+                self.human_gs.restore(torch.load(cfg.human.ckpt), cfg=self.cfg.human.lr)
                 logger.info(f"Loaded human model from {cfg.human.ckpt}")
             else:
                 ckpt_files = sorted(glob.glob(f"{cfg.logdir_ckpt}/*human*.pth"))
                 if len(ckpt_files) > 0:
                     ckpt = torch.load(ckpt_files[-1])
-                    self.human_gs.load_state_dict(ckpt)
+                    self.human_gs.restore(ckpt)
                     logger.info(f"Loaded human model from {ckpt_files[-1]}")
                 else:
                     print("Pseudo-Not-Implemented Error")
@@ -332,7 +332,7 @@ class GaussianTrainer:
             loss_dict["loss"] = loss
 
             # ~~~~ save images (GOF way) ~~~~
-            if render_mode in ["scene", "human"]: # TODO: add human
+            if False and render_mode in ["scene", "human"]: # TODO: add human
                 # TODO: extend this method to handle the different cases of HUGS
                 if render_mode == "human":
                     gaussians = self.human_gs
@@ -419,7 +419,7 @@ class GaussianTrainer:
                     torchvision.utils.save_image(image_to_show, f"{self.cfg.logdir}/log_images/{t_iter}.jpg")
 
                 # save pointcloud for subsequent mesh extraction
-                if render_mode == "scene" and t_iter in [1_000, 5_000, 15_000]:
+                if render_mode in ["scene", "human"] and t_iter in [1_000, 5_000, 15_000, 20_000, self.cfg.train.num_steps]:
                     print("\n[ITER {}] Saving Gaussians".format(t_iter))
                     self.scene.save(t_iter)
             # ~~~~ save images (GOF way) ~~~~
@@ -494,11 +494,11 @@ class GaussianTrainer:
                 ].grad[: human_gs_out["xyz"].shape[0]]
                 with torch.no_grad():
                     self.human_densification(
-                        human_gs_out=human_gs_out,
                         visibility_filter=render_pkg["visibility_filter"],
                         radii=render_pkg["radii"],
                         viewspace_point_tensor=render_pkg["human_viewspace_points"],
                         iteration=t_iter + 1,
+                        trainCameras=trainCameras  
                     )
 
             if self.human_gs:
@@ -577,12 +577,13 @@ class GaussianTrainer:
 
         if self.human_gs:
             torch.save(
-                self.human_gs.state_dict(), f"{self.cfg.logdir_ckpt}/human_{iter_s}.pth"
+                self.human_gs.capture(), f"{self.cfg.logdir_ckpt}/human_{iter_s}.pth"
             )
+            self.human_gs.save_ply(f"{self.cfg.logdir}/meshes/human_{iter_s}_splat.ply")
 
         if self.scene_gs:
             torch.save(
-                self.scene_gs.state_dict(), f"{self.cfg.logdir_ckpt}/scene_{iter_s}.pth"
+                self.scene_gs.capture(), f"{self.cfg.logdir_ckpt}/scene_{iter_s}.pth"
             )
             self.scene_gs.save_ply(f"{self.cfg.logdir}/meshes/scene_{iter_s}_splat.ply")
 
@@ -620,7 +621,7 @@ class GaussianTrainer:
             logger.info(f"[{iteration:06d}] Resetting opacity!!!")
             self.scene_gs.reset_opacity()
 
-    def human_densification(self, human_gs_out, visibility_filter, radii, viewspace_point_tensor, iteration):
+    def human_densification(self, visibility_filter, radii, viewspace_point_tensor, iteration, trainCameras):
         self.human_gs.max_radii2D[visibility_filter] = torch.max(
             self.human_gs.max_radii2D[visibility_filter], 
             radii[visibility_filter]
@@ -637,6 +638,7 @@ class GaussianTrainer:
                 max_screen_size=size_threshold,
                 max_n_gs=self.cfg.human.max_n_gaussians,
             )
+            self.human_gs.compute_3D_filter(cameras=trainCameras)
 
     @torch.no_grad()
     def validate(self, iter=None):
