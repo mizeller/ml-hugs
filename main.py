@@ -59,7 +59,7 @@ def main(cfg):
     
     # run evaluation
     trainer.validate()
-    
+
     mode = 'eval' if cfg.eval else 'train'
     with open(os.path.join(cfg.logdir, f'results_{mode}.json'), 'w') as f:
         json.dump(trainer.eval_metrics, f, indent=4)
@@ -69,7 +69,23 @@ def main(cfg):
         trainer.animate()
         trainer.render_canonical(pose_type='a_pose')
         trainer.render_canonical(pose_type='da_pose')
+   
+    if cfg.mode == 'human': 
+        # open local viewer to visualize human
+        import subprocess
+        command = [
+            "python", "local_viewer.py", 
+            "--model-path", f"{cfg.logdir}", 
+            "--point-path", "meshes/human_final_splat.ply"
+        ]
 
+        try:
+            subprocess.run(command, capture_output=True, text=True, check=True)
+
+        except subprocess.CalledProcessError as e:
+            print(f"Error occurred: {e}")
+            print("STDOUT:", e.stdout)
+            print("STDERR:", e.stderr)
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser()
