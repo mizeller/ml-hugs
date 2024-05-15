@@ -354,10 +354,6 @@ class GaussianTrainer:
                     os.makedirs(f"{self.cfg.logdir}/train", exist_ok = True)
                     torchvision.utils.save_image(img_row, f"{self.cfg.logdir}/train/{t_iter:06d}.png")
 
-            # save pointcloud for subsequent mesh extraction
-            if render_mode in ["scene", "human"] and t_iter in [self.cfg.train.num_steps, int(self.cfg.train.num_steps/2)]:
-                print("\n[ITER {}] Saving Gaussians".format(t_iter))
-                self.scene.save(t_iter)
  
             if t_iter >= self.cfg.scene.opt_start_iter:
                 if (
