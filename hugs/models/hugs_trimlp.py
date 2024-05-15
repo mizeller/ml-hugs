@@ -240,58 +240,15 @@ class HUGS_TRIMLP(GaussianModel):
         opacity = appearance_out["opacity"]
         return opacity
 
-    # def get_appearance_embedding(self, idx):
-    #     pass
+    def get_covariance(self, scaling_modifier = 1):
+        pass 
 
-    @property
-    def get_xyz_offset(self):
-        tri_feats = self.triplane(self.get_xyz)
-        geometry_out = self.geometry_dec(tri_feats)
-        xyz_offsets = geometry_out["xyz"]
-        return xyz_offsets # torch.Size([110210, 3])
+    def get_view2gaussian(self):
+        pass 
 
-    # @property
-    def get_lbs_weights(self, use_softmax: bool = False):
-        lbs_weights = None
-        if self.use_deformer:
-            tri_feats = self.triplane(self.get_xyz)
-            deformation_out = self.deformation_dec(tri_feats)
-            lbs_weights = deformation_out["lbs_weights"]
-            if use_softmax:
-                lbs_weights = F.softmax(lbs_weights / 0.1, dim=-1)
-                if abs(lbs_weights.sum(-1).mean().item() - 1) < 1e-7:
-                    pass
-                else:
-                    logger.warning(
-                        f"LBS weights should sum to 1, but it is: {lbs_weights.sum(-1).mean().item()}"
-                    )
-        return lbs_weights
-   
-    @property
-    def get_posedirs(self):
-        posedirs = None
-        if self.use_deformer:
-            tri_feats = self.triplane(self.get_xyz)
-            deformation_out = self.deformation_dec(tri_feats)
-            posedirs = deformation_out["posedirs"]
-        return posedirs
+    def create_from_pcd(self, pcd, spatial_lr_scale):
+        pass
 
-    # def reset_opacity(self):
-    #     pass
-    
-    # def get_covariance(self, scaling_modifier = 1):
-    #     pass 
-
-    # def get_view2gaussian(self):
-    #     pass 
-
-    def create_from_pcd(self, pcd: BasicPointCloud, spatial_lr_scale: float):
-        # TODO - HELP: not sure how to implement this in the case of TRIMLP; in original implementation
-        # features are derived from pcd....
-        # perhaps, to make things easier, this can be skipped for now
-        raise NotImplementedError
-
-    # FIXME: this method needs to be aligned w/ SceneGS
     def setup_optimizer(self, cfg):
         self.percent_dense = cfg.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -589,7 +546,7 @@ class HUGS_TRIMLP(GaussianModel):
             f"NOT CREATED eps_offsets with shape: {eps_offsets.shape}, requires_grad: {requires_grad}"
         )
     
-    def forward_old(
+    def forward(
         self,
         global_orient=None, 
         body_pose=None, 
@@ -597,7 +554,6 @@ class HUGS_TRIMLP(GaussianModel):
         transl=None, 
         smpl_scale=None,
         dataset_idx=-1,
-        is_train=False,
         ext_tfs=None,
     ):
         
@@ -730,35 +686,6 @@ class HUGS_TRIMLP(GaussianModel):
         
         deformed_gs_shs = gs_shs.clone()
        
-       
-        human_gs_out_dict = {
-            'xyz': deformed_xyz,
-            'xyz_canon': gs_xyz,
-            'xyz_offsets': xyz_offsets,
-            'scales': gs_scales,
-            'scales_canon': gs_scales_canon,
-            'rotq': deformed_gs_rotq,
-            'rotq_canon': gs_rotq,
-            'rotmat': deformed_gs_rotmat,
-            'rotmat_canon': gs_rotmat,
-            'shs': deformed_gs_shs,
-            'opacity': gs_opacity,
-            'normals': deformed_normals,
-            'normals_canon': canon_normals,
-            'active_sh_degree': self.active_sh_degree,
-            'rot6d_canon': gs_rot6d,
-            'lbs_weights': lbs_weights,
-            'posedirs': posedirs,
-            'gt_lbs_weights': gt_lbs_weights,
-        } 
-
-        human_gs_out: HUGS_TRIMLP_MINIMAL = HUGS_TRIMLP_MINIMAL(human_gs_out_dict)
-        
-        self.forward(smpl_scale=smpl_scale,
-                    dataset_idx=dataset_idx,
-                    is_train=True,
-                    ext_tfs=None)
-        return human_gs_out 
         
         return {
             'xyz': deformed_xyz,
@@ -780,157 +707,7 @@ class HUGS_TRIMLP(GaussianModel):
             'posedirs': posedirs,
             'gt_lbs_weights': gt_lbs_weights,
         }
-        
-    def forward(
-        self,
-        global_orient=None,
-        body_pose=None,
-        betas=None,
-        transl=None,
-        smpl_scale=None,
-        dataset_idx=-1,
-        is_train=False,
-        ext_tfs=None,
-    ):
-        """refactored version of forward method"""
-        gs_scales = self.get_scaling
-        gs_xyz = self.get_xyz + self.get_xyz_offset
-        gs_rotmat = rotation_6d_to_matrix(self.get_rotation(rot6D=True))
-        gs_rotq = matrix_to_quaternion(gs_rotmat)
-        lbs_weights = self.get_lbs_weights(use_softmax=True)
-        posedirs = self.get_posedirs
-
-        if hasattr(self, "global_orient") and global_orient is None:
-            global_orient = rotation_6d_to_axis_angle(
-                self.global_orient[dataset_idx].reshape(-1, 6)
-            ).reshape(3)
-
-        if hasattr(self, "body_pose") and body_pose is None:
-            body_pose = rotation_6d_to_axis_angle(
-                self.body_pose[dataset_idx].reshape(-1, 6)
-            ).reshape(23 * 3)
-
-        if hasattr(self, "betas") and betas is None:
-            betas = self.betas
-
-        if hasattr(self, "transl") and transl is None:
-            transl = self.transl[dataset_idx]
-
-        # vitruvian -> t-pose -> posed
-        # remove and reapply the blendshape
-        smpl_output = self.smpl(
-            betas=betas.unsqueeze(0),
-            body_pose=body_pose.unsqueeze(0),
-            global_orient=global_orient.unsqueeze(0),
-            disable_posedirs=False,
-            return_full_pose=True,
-        )
-
-        gt_lbs_weights = None
-        if self.use_deformer:
-            A_t2pose = smpl_output.A[0]
-            A_vitruvian2pose = A_t2pose @ self.inv_A_t2vitruvian
-            deformed_xyz, _, lbs_T, _, _ = lbs_extra(
-                A_vitruvian2pose[None],
-                gs_xyz[None],
-                posedirs,
-                lbs_weights,
-                smpl_output.full_pose,
-                disable_posedirs=self.disable_posedirs,
-                pose2rot=True,
-            )
-            deformed_xyz = deformed_xyz.squeeze(0)
-            lbs_T = lbs_T.squeeze(0)
-
-            with torch.no_grad():
-                # gt lbs is needed for lbs regularization loss
-                # predicted lbs should be close to gt lbs
-                _, gt_lbs_weights = smpl_lbsweight_top_k(
-                    lbs_weights=self.smpl.lbs_weights,
-                    points=gs_xyz.unsqueeze(0),
-                    template_points=self.vitruvian_verts.unsqueeze(0),
-                )
-                gt_lbs_weights = gt_lbs_weights.squeeze(0)
-                if abs(gt_lbs_weights.sum(-1).mean().item() - 1) < 1e-7:
-                    pass
-                else:
-                    logger.warning(
-                        f"GT LBS weights should sum to 1, but it is: {gt_lbs_weights.sum(-1).mean().item()}"
-                    )
-        else:
-            curr_offsets = (smpl_output.shape_offsets + smpl_output.pose_offsets)[0]
-            T_t2pose = smpl_output.T[0]
-            T_vitruvian2t = self.inv_T_t2vitruvian.clone()
-            T_vitruvian2t[..., :3, 3] = (
-                T_vitruvian2t[..., :3, 3] + self.canonical_offsets - curr_offsets
-            )
-            T_vitruvian2pose = T_t2pose @ T_vitruvian2t
-
-            _, lbs_T = smpl_lbsmap_top_k(
-                lbs_weights=self.smpl.lbs_weights,
-                verts_transform=T_vitruvian2pose.unsqueeze(0),
-                points=gs_xyz.unsqueeze(0),
-                template_points=self.vitruvian_verts.unsqueeze(0),
-                K=6,
-            )
-            lbs_T = lbs_T.squeeze(0)
-
-            homogen_coord = torch.ones_like(gs_xyz[..., :1])
-            gs_xyz_homo = torch.cat([gs_xyz, homogen_coord], dim=-1)
-            deformed_xyz = torch.matmul(lbs_T, gs_xyz_homo.unsqueeze(-1))[..., :3, 0]
-
-        if smpl_scale is not None:
-            deformed_xyz = deformed_xyz * smpl_scale.unsqueeze(0)
-            gs_scales = gs_scales * smpl_scale.unsqueeze(0)
-
-        if transl is not None:
-            deformed_xyz = deformed_xyz + transl.unsqueeze(0)
-
-        deformed_gs_rotmat = lbs_T[:, :3, :3] @ gs_rotmat
-        deformed_gs_rotq = matrix_to_quaternion(deformed_gs_rotmat)
-
-        if ext_tfs is not None:
-            tr, rotmat, sc = ext_tfs
-            deformed_xyz = (
-                tr[..., None] + (sc[None] * (rotmat @ deformed_xyz[..., None]))
-            ).squeeze(-1)
-            gs_scales = sc * gs_scales
-
-            rotq = matrix_to_quaternion(rotmat)
-            deformed_gs_rotq = quaternion_multiply(rotq, deformed_gs_rotq)
-            deformed_gs_rotmat = quaternion_to_matrix(deformed_gs_rotq)
-
-        self.normals = torch.zeros_like(gs_xyz)
-        self.normals[:, 2] = 1.0
-
-        canon_normals = (gs_rotmat @ self.normals.unsqueeze(-1)).squeeze(-1)
-        deformed_normals = (deformed_gs_rotmat @ self.normals.unsqueeze(-1)).squeeze(-1)
-
-        update_dict = {
-            "xyz": deformed_xyz,
-            "xyz_offsets": self.get_xyz_offset,
-            "scales": gs_scales,
-            "rotq": deformed_gs_rotq,
-            "rotq_canon": gs_rotq,
-            "rotmat": deformed_gs_rotmat,
-            "shs": self.get_features.clone(),
-            "opacity": self.get_opacity,
-            "normals": deformed_normals,
-            "normals_canon": canon_normals,
-            "active_sh_degree": self.active_sh_degree,
-            "rot6d_canon": self.get_rotation(rot6D=True),
-            "lbs_weights": lbs_weights,
-            "posedirs": posedirs,
-            "gt_lbs_weights": gt_lbs_weights,
-        }
-
-        self.update_attributes(update_dict)
-    
-    # Example method to update attributes based on a dictionary (if needed later)
-    def update_attributes(self, data_dict):
-        for key, value in data_dict.items():
-            setattr(self, key, value)
-
+ 
     @torch.no_grad()
     def _get_vitruvian_verts(self):
         "return vertices spread over: https://en.wikipedia.org/wiki/Vitruvian_Man"
@@ -1092,19 +869,10 @@ class HUGS_TRIMLP(GaussianModel):
 
         pbar = tqdm(range(num_steps))
         for i in pbar:
-
-            # remove this shit...
-            model_out = {
-                "xyz_offsets": self.get_xyz_offset,
-                "scales": self.get_scaling,
-                "rot6d_canon": self.get_rotation(rot6D=True),
-                "shs": self.get_features,
-                "opacity": self.get_opacity,
-                "lbs_weights": self.get_lbs_weights(use_softmax=True),
-                "posedirs": self.get_posedirs
-            }
-            # else: # case for HUGS_WO_TRIMLP
-            #     model_out = self.forward(global_orient, body_pose, betas)
+            if hasattr(self, 'canon_forward'):
+                model_out = self.canon_forward()
+            else:
+                model_out = self.forward(global_orient, body_pose, betas)
 
             if i % 1000 == 0: # why tho?
                 continue
@@ -1129,7 +897,38 @@ class HUGS_TRIMLP(GaussianModel):
 
         return
 
-class HUGS_TRIMLP_MINIMAL(HUGS_TRIMLP):
-    def __init__(self, init_dict):
-        for key, value in init_dict.items():
-            setattr(self, key, value)
+    @property
+    def get_xyz_offset(self):
+        tri_feats = self.triplane(self.get_xyz)
+        geometry_out = self.geometry_dec(tri_feats)
+        xyz_offsets = geometry_out["xyz"]
+        return xyz_offsets # torch.Size([110210, 3])
+
+    # @property
+    def get_lbs_weights(self, use_softmax: bool = False):
+        lbs_weights = None
+        if self.use_deformer:
+            tri_feats = self.triplane(self.get_xyz)
+            deformation_out = self.deformation_dec(tri_feats)
+            lbs_weights = deformation_out["lbs_weights"]
+            if use_softmax:
+                lbs_weights = F.softmax(lbs_weights / 0.1, dim=-1)
+                if abs(lbs_weights.sum(-1).mean().item() - 1) < 1e-7:
+                    pass
+                else:
+                    logger.warning(
+                        f"LBS weights should sum to 1, but it is: {lbs_weights.sum(-1).mean().item()}"
+                    )
+        return lbs_weights
+   
+    @property
+    def get_posedirs(self):
+        posedirs = None
+        if self.use_deformer:
+            tri_feats = self.triplane(self.get_xyz)
+            deformation_out = self.deformation_dec(tri_feats)
+            posedirs = deformation_out["posedirs"]
+        return posedirs
+
+    def reset_opacity(self):
+        pass
