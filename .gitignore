@@ -12,3 +12,4 @@ screenshots
 *.pth
 *.zip
 *.ply
+experiments/
