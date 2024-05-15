@@ -106,31 +106,23 @@ class HumanSceneLoss(nn.Module):
         mask = data['mask'].unsqueeze(0)
         rendering = render_pkg['render']
         pred_img = rendering[:3, :, :]
+        norm_img = render_pkg['normal_img']
+
+        extras_dict['gt_img'] = gt_image
+        extras_dict['pred_img'] = pred_img
+        extras_dict['normal_img'] = norm_img
         
         if render_mode == "human":
             gt_image = gt_image * mask + human_bg_color[:, None, None] * (1. - mask)
             extras_dict['gt_img'] = gt_image
-            extras_dict['pred_img'] = pred_img
         elif render_mode == "scene":
             # invert the mask
-            extras_dict['pred_img'] = pred_img
-            
             mask = (1. - data['mask'].unsqueeze(0))
             gt_image = gt_image * mask
+            extras_dict['gt_img'] = gt_image
             pred_img = pred_img * mask
  
-            # if iteration == 100:
-            #     from torchvision.transforms import ToPILImage
-            #     ToPILImage()(mask.detach().cpu()).save('00_mask.png') # mask as it's in the file
-            #     ToPILImage()(1-mask.detach().cpu()).save('01_mask_inv.png') # mask as it's passed to l1_loss
-            #     ToPILImage()(gt_image.detach().cpu()).save('02_gt_image.png') # gt_image as it's passed to loss fns
-            #     ToPILImage()(pred_img.detach().cpu()).save('03_pred_img.png') # pred_img as it's passed to loss fns
-            
-            extras_dict['gt_img'] = gt_image
-        else:
-            extras_dict['gt_img'] = gt_image
-            extras_dict['pred_img'] = pred_img
-        
+
         if self.l_l1_w > 0.0:
             if render_mode == "human":
                 Ll1 = l1_loss(pred_img, gt_image, mask)

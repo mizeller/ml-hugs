@@ -14,7 +14,7 @@ dataset:
 train:
   batch_size: 1
   num_workers: 0
-  num_steps: 14998
+  num_steps: 15_000
   save_ckpt_interval: 15000
   val_interval: 1000
   anim_interval: 15000

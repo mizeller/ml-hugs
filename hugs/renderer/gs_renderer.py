@@ -15,6 +15,7 @@ from diff_gaussian_rasterization import (
 
 from hugs import gaussian_renderer as GOF_renderer
 from hugs.models.gaussian_model import GaussianModel
+from hugs.utils.rotations import quaternion_to_matrix
 
 def render_human_scene(
     data, 
@@ -47,6 +48,7 @@ def render_human_scene(
             bg_color=bg_color,
             active_sh_degree=active_sh_degree,
         ) 
+        render_pkg["normal_img"] = None # TODO: implement similar to human case
     elif render_mode == 'human':
         # TODO: use GOF_renderer.render_new instead of vanilla HUGS render method 
         feats = human_gs['shs']
@@ -66,8 +68,34 @@ def render_human_scene(
                 bg_color=bg_color,
                 active_sh_degree=active_sh_degree,
             )
+
+        # Q. is this even necessary? the prev. render_pkg should already
+        #    include the normal render...
+        # A. ...yes. Could not figure out how render_pkl['render'][3:6,:,:]
+        #    is related to this normal image...
+
+        rotmat = quaternion_to_matrix(rotations)
+        gs_normals = torch.zeros_like(means3D).detach()
+        gs_normals[:, 2] = 1.0
+        gs_normals = (rotmat @ gs_normals.unsqueeze(-2).permute(0,2,1)).squeeze(-1)
+        normal_colors = torch.abs(gs_normals * -1.5 + 0.5)
+        render_human_pkg = render(
+            means3D=means3D,
+            feats=normal_colors,
+            opacity=opacity,
+            scales=scales,
+            rotations=rotations,
+            data=data,
+            scaling_modifier=scaling_modifier,
+            bg_color=bg_color,
+            active_sh_degree=human_gs['active_sh_degree'],
+        )
+        normal_img = render_human_pkg['render'][:3,:,:]
+        render_pkg['normal_img'] = normal_img
+
     elif render_mode == "scene":
         render_pkg = GOF_renderer.render_new(data=data, gaussians=scene_gs, bg_color=bg_color)
+        render_pkg["normal_img"] = None # TODO: implement similar to human case
     else:
         raise ValueError(f"Invalid render mode: {render_mode}")
         

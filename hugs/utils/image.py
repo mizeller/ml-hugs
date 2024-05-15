@@ -15,6 +15,7 @@
 import os
 import torch
 import pathlib
+import torchvision.transforms as T
 from torchvision.utils import make_grid
 from PIL import Image, ImageDraw, ImageFont
 from typing import Optional, Union, List, BinaryIO
@@ -93,3 +94,23 @@ def save_rgba_image(
         draw = ImageDraw.Draw(im)
         draw.text((10, 10), text_labels, fill=(0, 0, 0), font=txt_font)
     im.save(fp, format=format)
+
+    
+def add_text_to_image_tensor(img_tensor, text, font_size=48):
+    transform = T.ToPILImage()
+    img = transform(img_tensor)
+    
+    draw = ImageDraw.Draw(img)
+    font = ImageFont.truetype("arial.ttf",font_size)
+    
+    _, height = img.size
+    
+    # Position the text at the bottom center of the image
+    x = 15
+    y = height - 65
+    
+    draw.text((x, y), text, font=font, fill="red")
+    
+    # Convert back to tensor
+    img_tensor_with_text = T.ToTensor()(img)
+    return img_tensor_with_text

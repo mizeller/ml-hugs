@@ -6,11 +6,9 @@
 import os
 import glob
 import shutil
-import random
 import torch
 import itertools
 import torchvision
-import numpy as np
 from tqdm import tqdm
 from lpips import LPIPS
 from loguru import logger
@@ -25,7 +23,7 @@ from hugs.losses.loss import HumanSceneLoss
 from hugs.models.hugs_trimlp import HUGS_TRIMLP
 from hugs.models.hugs_wo_trimlp import HUGS_WO_TRIMLP
 from hugs.models import SceneGS
-from hugs.utils.image import psnr, save_image
+from hugs.utils.image import psnr, save_image, add_text_to_image_tensor
 from hugs.utils.general import (
     RandomIndexIterator,
     save_images,
@@ -331,98 +329,6 @@ class GaussianTrainer:
 
             loss_dict["loss"] = loss
 
-            # ~~~~ save images (GOF way) ~~~~
-            if False and render_mode in ["scene", "human"]: # TODO: add human
-                # TODO: extend this method to handle the different cases of HUGS
-                if render_mode == "human":
-                    gaussians = self.human_gs
-                if render_mode == "scene":
-                    gaussians = self.scene_gs
-
-                is_save_images = True
-                if is_save_images and (t_iter % 50 == 0):
-                    with torch.no_grad():
-                        # from torchvision.transforms import ToPILImage
-                        # pick random view for evaluation (train/val img)
-                        eval_cam_idx = random.choice(valid_train_cams)
-                        eval_cam = trainCameras[eval_cam_idx]
-                        print(f"Evaluating view/data: {int(eval_cam.image_name)}")
-                        # ToPILImage()(eval_cam.original_image.detach().cpu()).save('eval_cam_image.png')
-                        if int(eval_cam.image_name) in self.train_dataset.train_split:
-                            eval_data_idx = self.train_dataset.train_split.index(int(eval_cam.image_name))
-                            eval_data = self.train_dataset[eval_data_idx]
-                        else:
-                            # image is form val set
-                            eval_data_idx = self.train_dataset.val_split.index(int(eval_cam.image_name))
-                            eval_data = self.val_dataset[eval_data_idx]
-                        # ToPILImage()(eval_data['rgb'].detach().cpu()).save('eval_data_image.png')
-
-                        assert torch.equal(eval_data['rgb'], eval_cam.original_image), "Image mismatch"
-                        
-                        if render_mode == "human":
-                            human_gs_out_eval = self.human_gs.forward(
-                                smpl_scale=eval_data["smpl_scale"][None],
-                                dataset_idx=eval_data_idx,
-                            )
-                            
-                            render_pkg_eval = render_human_scene(
-                                data=eval_data,
-                                human_gs=human_gs_out_eval, # not nice - TODO: replace w/ self.human_gs eventually 
-                                scene_gs=self.scene_gs,
-                                bg_color=bg_color,
-                                human_bg_color=human_bg_color,
-                                render_mode=render_mode,
-                                render_human_separate=render_human_separate,
-                            )
-                            rendering = render_pkg_eval["render"]
-                            image = rendering[:3, :, :]
-                            transformed_image = L1_loss_appearance(image, eval_cam.original_image.cuda(), gaussians, eval_cam.idx, return_transformed_image=True)
-                            normal = rendering[3:6, :, :]
-                            normal = torch.nn.functional.normalize(normal, p=2, dim=0)
-                        if render_mode == "scene":
-                            rendering = GOF_renderer.render(eval_cam, gaussians, bg_color)["render"]
-                            image = rendering[:3, :, :]
-                            transformed_image = L1_loss_appearance(image, eval_cam.original_image.cuda(), gaussians, eval_cam.idx, return_transformed_image=True)
-                            normal = rendering[3:6, :, :]
-                            normal = torch.nn.functional.normalize(normal, p=2, dim=0)
-                        
-                    # transform to world space
-                    c2w = (eval_cam.world_view_transform.T).inverse()
-                    normal2 = c2w[:3, :3] @ normal.reshape(3, -1)
-                    normal = normal2.reshape(3, *normal.shape[1:])
-                    normal = (normal + 1.) / 2.
-                    
-                    depth = rendering[6, :, :]
-                    depth_normal, _ = depth_to_normal(eval_cam, depth[None, ...])
-                    depth_normal = (depth_normal + 1.) / 2.
-                    depth_normal = depth_normal.permute(2, 0, 1)
-                    
-                    gt_image = eval_cam.original_image.cuda()
-                    
-                    depth_map = apply_depth_colormap(depth[..., None], rendering[7, :, :, None], near_plane=None, far_plane=None)
-                    depth_map = depth_map.permute(2, 0, 1)
-                    
-                    accumlated_alpha = rendering[7, :, :, None]
-                    colored_accum_alpha = apply_depth_colormap(accumlated_alpha, None, near_plane=0.0, far_plane=1.0)
-                    colored_accum_alpha = colored_accum_alpha.permute(2, 0, 1)
-                    
-                    distortion_map = rendering[8, :, :]
-                    distortion_map = colormap(distortion_map.detach().cpu().numpy()).to(normal.device)
-                
-                    row0 = torch.cat([gt_image, image, depth_normal, normal], dim=2)
-                    row1 = torch.cat([depth_map, colored_accum_alpha, distortion_map, transformed_image], dim=2)
-                    
-                    image_to_show = torch.cat([row0, row1], dim=1)
-                    image_to_show = torch.clamp(image_to_show, 0, 1)
-                    
-                    os.makedirs(f"{self.cfg.logdir}/log_images", exist_ok = True)
-                    torchvision.utils.save_image(image_to_show, f"{self.cfg.logdir}/log_images/{t_iter}.jpg")
-
-                # save pointcloud for subsequent mesh extraction
-                if render_mode in ["scene", "human"] and t_iter in [1_000, 5_000, 15_000, 20_000, self.cfg.train.num_steps]:
-                    print("\n[ITER {}] Saving Gaussians".format(t_iter))
-                    self.scene.save(t_iter)
-            # ~~~~ save images (GOF way) ~~~~
             if t_iter % 10 == 0:
                 postfix_dict = {
                     "#hp": f"{self.human_gs.n_gs/1000 if self.human_gs else 0:.1f}K",
@@ -441,17 +347,18 @@ class GaussianTrainer:
 
             if t_iter % 10 == 0: # NOTE: change viz_interval here
                 with torch.no_grad():
-                    pred_img = loss_extras["pred_img"]
-                    gt_img = loss_extras["gt_img"]
-                    log_pred_img = (
-                        pred_img.cpu().numpy().transpose(1, 2, 0) * 255
-                    ).astype(np.uint8)
-                    log_gt_img = (gt_img.cpu().numpy().transpose(1, 2, 0) * 255).astype(
-                        np.uint8
-                    )
-                    log_img = np.concatenate([log_gt_img, log_pred_img], axis=1)
-                    save_images(log_img, f"{self.cfg.logdir}/train/{t_iter:06d}.png")
+                    gt_img = add_text_to_image_tensor(loss_extras["gt_img"], "Ground Truth")
+                    pred_img = add_text_to_image_tensor(loss_extras["pred_img"], "Rendered Image")
+                    normal_img = add_text_to_image_tensor(loss_extras["normal_img"], "Normal Image")
+                    img_row = torch.cat([gt_img, pred_img, normal_img], dim=2) 
+                    os.makedirs(f"{self.cfg.logdir}/train", exist_ok = True)
+                    torchvision.utils.save_image(img_row, f"{self.cfg.logdir}/train/{t_iter:06d}.png")
 
+            # save pointcloud for subsequent mesh extraction
+            if render_mode in ["scene", "human"] and t_iter in [self.cfg.train.num_steps, int(self.cfg.train.num_steps/2)]:
+                print("\n[ITER {}] Saving Gaussians".format(t_iter))
+                self.scene.save(t_iter)
+ 
             if t_iter >= self.cfg.scene.opt_start_iter:
                 if (
                     t_iter - self.cfg.scene.opt_start_iter
