@@ -147,7 +147,10 @@ def render(viewpoint_camera, gaussians: GaussianModel, bg_color, kernel_size: fl
     cov3D_precomp = None # gaussians.get_covariance(scaling_modifier) # None
     view2gaussian_precomp = None # gaussians.get_view2gaussian(raster_settings.viewmatrix) # None
     scales = gaussians.get_scaling_with_3D_filter
-    rotations = gaussians.get_rotation()
+    try:
+        rotations = gaussians.get_rotation()
+    except:
+        rotations = gaussians.get_rotation
 
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
