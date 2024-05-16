@@ -37,6 +37,12 @@ from hugs.utils.depth_utils import depth_to_normal
 from hugs.utils.vis_utils import apply_depth_colormap, colormap
 from hugs.losses.loss import l1_loss
 
+try:
+    from torch.utils.tensorboard import SummaryWriter
+    TENSORBOARD_FOUND = True
+except ImportError:
+    TENSORBOARD_FOUND = False
+
 def get_train_dataset(cfg):
     if cfg.dataset.name == "neuman":
         logger.info(f"Loading NeuMan dataset {cfg.dataset.seq}-train")
@@ -253,6 +259,13 @@ class GaussianTrainer:
     def train(self):
         
         # GOF
+        tb_writer = None
+        iter_start = torch.cuda.Event(enable_timing = True)
+        iter_end = torch.cuda.Event(enable_timing = True)
+        if TENSORBOARD_FOUND:
+            tb_writer = SummaryWriter(self.cfg.logdir)
+        else:
+            print("Tensorboard not available: not logging progress")
         trainCameras = self.scene.getTrainCameras().copy()
         # the indices in valid_train_cams are camera objects, for which corresponding
         # objects exist in self.train_dataset or self.val_dataset. only sample cam views
@@ -276,16 +289,26 @@ class GaussianTrainer:
         sgrad_means, sgrad_stds = [], []
         render_mode = self.cfg.mode
         for t_iter in range(self.cfg.train.num_steps + 1):
+            iter_start.record()
+
+            # Update Learning Rate
             if self.scene_gs and self.cfg.train.optim_scene:
                 self.scene_gs.update_learning_rate(t_iter)
-
             if hasattr(self.human_gs, "update_learning_rate"):
                 self.human_gs.update_learning_rate(t_iter)
 
+            # Update very 1000 its we increase the levels of SH up to a maximum degree
+            if t_iter % 1000 == 0 and t_iter > 0:
+                if self.human_gs: self.human_gs.oneupSHdegree()
+                if self.scene_gs: self.scene_gs.oneupSHdegree()            
+            
+            # Pick a random data sample/camera
             rnd_idx = next(rand_idx_iter)
             data = self.train_dataset[rnd_idx]
-            
+           
+            # Render 
             human_gs_out = None # TODO: remove
+            bg_color = torch.rand(3, dtype=torch.float32, device="cuda")
             
             if self.human_gs:
                 human_gs_out = self.human_gs.forward(
@@ -293,9 +316,7 @@ class GaussianTrainer:
                     dataset_idx=rnd_idx,
                     ext_tfs=None,
                 )
-            
-            bg_color = torch.rand(3, dtype=torch.float32, device="cuda")
-
+ 
             if self.cfg.human.loss.humansep_w > 0.0 and render_mode == 'human_scene':
                 render_human_separate = True
                 human_bg_color = torch.rand(3, dtype=torch.float32, device="cuda")
@@ -316,6 +337,7 @@ class GaussianTrainer:
             if self.human_gs:
                 self.human_gs.init_values["edges"] = self.human_gs.edges
 
+            # Compute Loss
             loss, loss_dict, loss_extras = self.loss_fn(
                 data=data,
                 render_pkg=render_pkg,
@@ -331,26 +353,35 @@ class GaussianTrainer:
 
             loss.backward()
 
+            iter_end.record()   
+                
             loss_dict["loss"] = loss
 
-            if t_iter % 10 == 0:
-                postfix_dict = {
-                    "#hp": f"{self.human_gs.n_gs/1000 if self.human_gs else 0:.1f}K",
-                    "#sp": f"{self.scene_gs.get_xyz.shape[0]/1000 if self.scene_gs else 0:.1f}K",
-                    "h_sh_d": self.human_gs.active_sh_degree if self.human_gs else 0,
-                    "s_sh_d": self.scene_gs.active_sh_degree if self.scene_gs else 0,
-                }
-                for k, v in loss_dict.items():
-                    postfix_dict["l_" + k] = f"{v.item():.4f}"
+            with torch.no_grad():
+                # Progress Bar
+                if t_iter % 10 == 0:
+                    postfix_dict = {
+                        "#hp": f"{self.human_gs.n_gs/1000 if self.human_gs else 0:.1f}K",
+                        "#sp": f"{self.scene_gs.get_xyz.shape[0]/1000 if self.scene_gs else 0:.1f}K",
+                        "h_sh_d": self.human_gs.active_sh_degree if self.human_gs else 0,
+                        "s_sh_d": self.scene_gs.active_sh_degree if self.scene_gs else 0,
+                    }
+                    for k, v in loss_dict.items():
+                        postfix_dict["l_" + k] = f"{v.item():.4f}"
 
-                pbar.set_postfix(postfix_dict)
-                pbar.update(10)
+                    pbar.set_postfix(postfix_dict)
+                    pbar.update(10)
 
-            if t_iter == self.cfg.train.num_steps:
-                pbar.close()
+                if t_iter == self.cfg.train.num_steps:
+                    pbar.close()
 
-            if t_iter % 10 == 0: # NOTE: change viz_interval here
-                with torch.no_grad():
+                # Log & Visualize Training
+                if t_iter % 100 == 0:
+                    # logger
+                    for k,v in loss_dict.items():
+                        tb_writer.add_scalar(f"loss: {k}", v.item(), t_iter)
+                    
+                    # viz 
                     gt_img = add_text_to_image_tensor(loss_extras["gt_img"], "Ground Truth")
                     pred_img = add_text_to_image_tensor(loss_extras["pred_img"], "Rendered Image")
                     normal_img = add_text_to_image_tensor(loss_extras["normal_img"], "Normal Image")
@@ -358,14 +389,9 @@ class GaussianTrainer:
                     os.makedirs(f"{self.cfg.logdir}/train", exist_ok = True)
                     torchvision.utils.save_image(img_row, f"{self.cfg.logdir}/train/{t_iter:06d}.png")
 
- 
+            # Densification: Scene
             if t_iter >= self.cfg.scene.opt_start_iter:
-                if (
-                    t_iter - self.cfg.scene.opt_start_iter
-                ) < self.cfg.scene.densify_until_iter and self.cfg.mode in [
-                    "scene",
-                    "human_scene",
-                ]:
+                if (t_iter - self.cfg.scene.opt_start_iter) < self.cfg.scene.densify_until_iter and "scene" in self.cfg.mode: # scene, human_scene
                     render_pkg["scene_viewspace_points"] = render_pkg[
                         "viewspace_points"
                     ]
@@ -388,11 +414,9 @@ class GaussianTrainer:
                             trainCameras=trainCameras
                         )
 
+            # Densification: Human
             # TODO: fix human_gs_out in this if block
-            if t_iter < self.cfg.human.densify_until_iter and self.cfg.mode in [
-                "human",
-                "human_scene",
-            ]:
+            if t_iter < self.cfg.human.densify_until_iter and "human" in self.cfg.mode: # human, human_scene
                 render_pkg["human_viewspace_points"] = render_pkg["viewspace_points"][
                     : human_gs_out["xyz"].shape[0]
                 ]
@@ -450,9 +474,7 @@ class GaussianTrainer:
                 if self.cfg.mode in ["human", "human_scene"]:
                     self.render_canonical(t_iter, nframes=self.cfg.human.canon_nframes)
 
-            if t_iter % 1000 == 0 and t_iter > 0:
-                if self.human_gs: self.human_gs.oneupSHdegree()
-                if self.scene_gs: self.scene_gs.oneupSHdegree()
+
 
             if (
                 self.cfg.train.save_progress_images
