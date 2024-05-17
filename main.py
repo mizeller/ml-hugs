@@ -64,28 +64,28 @@ def main(cfg):
     with open(os.path.join(cfg.logdir, f'results_{mode}.json'), 'w') as f:
         json.dump(trainer.eval_metrics, f, indent=4)
         
-    # run animation
-    if cfg.mode in ['human', 'human_scene']:
-        trainer.animate()
-        trainer.render_canonical(pose_type='a_pose')
-        trainer.render_canonical(pose_type='da_pose')
+    # # run animation
+    # if cfg.mode in ['human', 'human_scene']:
+    #     trainer.animate()
+    #     trainer.render_canonical(pose_type='a_pose')
+    #     trainer.render_canonical(pose_type='da_pose')
    
-    if cfg.mode == 'human': 
-        # open local viewer to visualize human
-        import subprocess
-        command = [
-            "python", "local_viewer.py", 
-            "--model-path", f"{cfg.logdir}", 
-            "--point-path", "meshes/human_final_splat.ply"
-        ]
+    # if cfg.mode == 'human': 
+    #     # open local viewer to visualize human
+    #     import subprocess
+    #     command = [
+    #         "python", "local_viewer.py", 
+    #         "--model-path", f"{cfg.logdir}", 
+    #         "--point-path", "meshes/human_final_splat.ply"
+    #     ]
 
-        try:
-            subprocess.run(command, capture_output=True, text=True, check=True)
+    #     try:
+    #         subprocess.run(command, capture_output=True, text=True, check=True)
 
-        except subprocess.CalledProcessError as e:
-            print(f"Error occurred: {e}")
-            print("STDOUT:", e.stdout)
-            print("STDERR:", e.stderr)
+    #     except subprocess.CalledProcessError as e:
+    #         print(f"Error occurred: {e}")
+    #         print("STDOUT:", e.stdout)
+    #         print("STDERR:", e.stderr)
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser()
@@ -93,21 +93,30 @@ if __name__=='__main__':
     parser.add_argument("--cfg_id", type=int, default=-1, help="id of the config to run")
     args, extras = parser.parse_known_args()
     
-    cfg_file = OmegaConf.load(args.cfg_file)
-    list_of_cfgs, hyperparam_search_keys = get_cfg_items(cfg_file)
+    # cfg_file = OmegaConf.load(args.cfg_file)
+    # list_of_cfgs, hyperparam_search_keys = get_cfg_items(cfg_file)
     
-    logger.info(f'Running {len(list_of_cfgs)} experiments')
+    # logger.info(f'Running {len(list_of_cfgs)} experiments')
     
-    if args.cfg_id >= 0:
-        cfg_item = list_of_cfgs[args.cfg_id]
-        logger.info(f'Running experiment {args.cfg_id} -- {cfg_item.exp_name}')
+    
+    # if args.cfg_id >= 0:
+    #     cfg_item = list_of_cfgs[args.cfg_id]
+    #     logger.info(f'Running experiment {args.cfg_id} -- {cfg_item.exp_name}')
+    #     default_cfg.cfg_file = args.cfg_file
+    #     cfg = OmegaConf.merge(default_cfg, cfg_item, OmegaConf.from_cli(extras))
+    #     main(cfg)
+    # else:
+
+    import pickle
+    with open('list_of_cfgs_continue.txt', 'w') as f:
+        list_of_cfgs = pickle.load(f)
+
+    for exp_id, cfg_item in enumerate(list_of_cfgs):
+        import uuid
+        exp_uuid = str(uuid.uuid4()).replace("-", "")[:5]
+        cfg_item.exp_name = f"{cfg_item.exp_name}_{exp_uuid}"
+        logger.info(f'Running experiment {exp_id} -- {cfg_item.exp_name}')
         default_cfg.cfg_file = args.cfg_file
         cfg = OmegaConf.merge(default_cfg, cfg_item, OmegaConf.from_cli(extras))
         main(cfg)
-    else:
-        for exp_id, cfg_item in enumerate(list_of_cfgs):
-            logger.info(f'Running experiment {exp_id} -- {cfg_item.exp_name}')
-            default_cfg.cfg_file = args.cfg_file
-            cfg = OmegaConf.merge(default_cfg, cfg_item, OmegaConf.from_cli(extras))
-            main(cfg)
             

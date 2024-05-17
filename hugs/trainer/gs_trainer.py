@@ -380,6 +380,8 @@ class GaussianTrainer:
                     # logger
                     for k,v in loss_dict.items():
                         tb_writer.add_scalar(f"loss: {k}", v.item(), t_iter)
+                    tb_writer.add_scalar('iter_time', iter_start.elapsed_time(iter_end), t_iter)
+                    tb_writer.add_scalar('total_points', self.human_gs.get_xyz.shape[0], t_iter)
                     
                     # viz 
                     gt_img = add_text_to_image_tensor(loss_extras["gt_img"], "Ground Truth")
@@ -437,27 +439,27 @@ class GaussianTrainer:
                 self.human_gs.optimizer.zero_grad(set_to_none=True)
 
             # save checkpoint
-            if (t_iter % self.cfg.train.save_ckpt_interval == 0 and t_iter > 0) or (
-                t_iter == self.cfg.train.num_steps and t_iter > 0
-            ):
-                self.save_ckpt(t_iter)
+            # if (t_iter % self.cfg.train.save_ckpt_interval == 0 and t_iter > 0) or (
+            #     t_iter == self.cfg.train.num_steps and t_iter > 0
+            # ):
+            #     self.save_ckpt(t_iter)
 
-            # run validation
-            if t_iter % self.cfg.train.val_interval == 0 and t_iter > 0:
-                self.validate(t_iter)
+            # # run validation
+            # if t_iter % self.cfg.train.val_interval == 0 and t_iter > 0:
+            #     self.validate(t_iter)
 
-            if t_iter == 0:
-                if self.scene_gs:
-                    self.scene_gs.save_ply(
-                        f"{self.cfg.logdir}/meshes/scene_{t_iter:06d}_splat.ply"
-                    )
-                if self.human_gs:
-                    self.human_gs.save_ply(
-                        f"{self.cfg.logdir}/meshes/human_{t_iter:06d}_splat.ply",
-                    )
+            # if t_iter == 0:
+            #     if self.scene_gs:
+            #         self.scene_gs.save_ply(
+            #             f"{self.cfg.logdir}/meshes/scene_{t_iter:06d}_splat.ply"
+            #         )
+            #     if self.human_gs:
+            #         self.human_gs.save_ply(
+            #             f"{self.cfg.logdir}/meshes/human_{t_iter:06d}_splat.ply",
+            #         )
 
-                if self.cfg.mode in ["human", "human_scene"]:
-                    self.render_canonical(t_iter, nframes=self.cfg.human.canon_nframes)
+            #     if self.cfg.mode in ["human", "human_scene"]:
+            #         self.render_canonical(t_iter, nframes=self.cfg.human.canon_nframe
 
             if (
                 t_iter % self.cfg.train.anim_interval == 0

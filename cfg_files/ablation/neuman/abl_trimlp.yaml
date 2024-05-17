@@ -1,7 +1,7 @@
 seed: 0
 mode: human # human_scene
-output_path: output
-exp_name: 20240303_2145_abl_trimlp
+output_path: experiments
+exp_name: variable_loss_terms
 dataset_path: ''
 detect_anomaly: false
 debug: false
@@ -10,11 +10,11 @@ eval: false
 bg_color: white
 dataset:
   name: neuman
-  seq: ["citron", "seattle", "bike", "lab", "jogging", "parkinglot"]
+  seq: "lab" # ["seattle", "lab"] # , "citron", "bike","jogging", "parkinglot"]
 train:
   batch_size: 1
   num_workers: 0
-  num_steps: 15_000
+  num_steps: 7_000 # , 15_000
   save_ckpt_interval: 15000
   val_interval: 1000
   anim_interval: 15000
@@ -70,11 +70,11 @@ human:
     deformation: 0.0001
     scale_lr_w_npoints: false
     # GOF params
-    appearance_embeddings: 0.001
-    appearance_network: 0.001
+    appearance_embeddings: [0.001, 0.1, 1] #[0.001, 0.005, 0.01, 0.1] # 0.001
+    appearance_network: [0.001, 0.01, 0.1] # 0.001
   loss:
     ssim_w: 0.2
-    l1_w: 0.8
+    l1_w: 0.5
     lpips_w: 1.0
     lbs_w: 0.0
     humansep_w: 1.0
@@ -82,10 +82,10 @@ human:
     patch_size: 128
     use_patches: 1
     # GOF params
-    dist_w: 100 # 300 # 350 # 100
-    depth_normal_w: 0.05 # 1 # 0.05
-    dist_from_iter: 3000 # 15000 
-    depth_normal_from_iter: 1000 # 15000 
+    dist_w: [100, 1000, 5000] # 1000 # 300 # 350 # 100
+    depth_normal_w: [0.05, 0.5, 5] # 0.5 # 0.05 # 1 # 0.05
+    dist_from_iter: 0 # 3000 # 15000 # use this loss term from the beginning
+    depth_normal_from_iter: 0 # 1000 # 15000 # use this loss term from the beginning
   densification_interval: 600
   opacity_reset_interval: 3000
   densify_from_iter: 3000
@@ -93,7 +93,7 @@ human:
   densify_grad_threshold: 0.0002
   prune_min_opacity: 0.005
   densify_extent: 1.0
-  max_n_gaussians: 524288
+  max_n_gaussians: 250_000 # 524288
   percent_dense: 0.01
 scene:
   name: scene_gs
