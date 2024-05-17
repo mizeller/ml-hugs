@@ -108,7 +108,7 @@ if __name__=='__main__':
     # else:
 
     import pickle
-    with open('list_of_cfgs_continue.txt', 'w') as f:
+    with open('list_of_cfgs_continue.pkl', 'rb') as f:
         list_of_cfgs = pickle.load(f)
 
     for exp_id, cfg_item in enumerate(list_of_cfgs):
