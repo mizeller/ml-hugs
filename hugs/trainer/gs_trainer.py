@@ -226,20 +226,7 @@ class GaussianTrainer:
                 use_patches=l.use_patches,
                 bg_color=self.bg_color,
             )
-        else:
-            self.cfg.train.optim_scene = True
-            l = cfg.scene.loss
-            self.loss_fn = HumanSceneLoss(
-                l_ssim_w=l.ssim_w,
-                l_l1_w=l.l1_w,
-                l_dist_w=l.dist_w,
-                l_dist_from_iter=l.dist_from_iter,
-                l_depth_normal_w=l.depth_normal_w,
-                l_depth_normal_from_iter=l.depth_normal_from_iter,
-                bg_color=self.bg_color,
-            )
-
-        if cfg.mode in ["human", "human_scene"]:
+            
             self.canon_camera_params = get_rotating_camera(
                 dist=5.0,
                 img_size=512,
@@ -254,7 +241,21 @@ class GaussianTrainer:
             )
             self.static_smpl_params = get_smpl_static_params(
                 betas=betas, pose_type=self.cfg.human.canon_pose_type
+            )           
+
+        else:
+            self.cfg.train.optim_scene = True
+            l = cfg.scene.loss
+            self.loss_fn = HumanSceneLoss(
+                l_ssim_w=l.ssim_w,
+                l_l1_w=l.l1_w,
+                l_dist_w=l.dist_w,
+                l_dist_from_iter=l.dist_from_iter,
+                l_depth_normal_w=l.depth_normal_w,
+                l_depth_normal_from_iter=l.depth_normal_from_iter,
+                bg_color=self.bg_color,
             )
+
 
     def train(self):
         
