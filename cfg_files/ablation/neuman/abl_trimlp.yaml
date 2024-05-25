@@ -1,7 +1,7 @@
 seed: 0
 mode: human # human_scene
 output_path: experiments
-exp_name: surface_normal_loss
+exp_name: exp_surface_normal_loss
 dataset_path: ''
 detect_anomaly: false
 debug: false
@@ -14,13 +14,13 @@ dataset:
 train:
   batch_size: 1
   num_workers: 0
-  num_steps: 7_000 # , 15_000
+  num_steps: [7_000, 15_000, 30_000] # , 15_000
   save_ckpt_interval: 15000
   val_interval: 1000
   anim_interval: 15000
   optim_scene: true
   save_progress_images: false
-  progress_save_interval: 10
+  progress_save_interval: 100
 human:
   name: hugs_wo_trimlp
   ckpt: null
@@ -89,7 +89,7 @@ human:
     normal_w: [1.0, 0.1, 10.0, 100.0]
   densification_interval: 600
   opacity_reset_interval: 3000
-  densify_from_iter: 3000
+  densify_from_iter: 30_000  # 3000 # basically, turn dennsification off for experiment w/ additional loss term
   densify_until_iter: 15000
   densify_grad_threshold: 0.0002
   prune_min_opacity: 0.005
