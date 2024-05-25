@@ -221,6 +221,7 @@ class GaussianTrainer:
                 l_dist_from_iter=l.dist_from_iter,
                 l_depth_normal_w=l.depth_normal_w,
                 l_depth_normal_from_iter=l.depth_normal_from_iter,
+                l_normal_w=l.normal_w,
                 num_patches=l.num_patches,
                 patch_size=l.patch_size,
                 use_patches=l.use_patches,
@@ -337,6 +338,8 @@ class GaussianTrainer:
 
             if self.human_gs:
                 self.human_gs.init_values["edges"] = self.human_gs.edges
+                # store the initial gaussian normals for new loss computation
+                self.human_gs.init_values["deformed_normals"] = self.human_gs.deformed_normals
 
             # Compute Loss
             loss, loss_dict, loss_extras = self.loss_fn(

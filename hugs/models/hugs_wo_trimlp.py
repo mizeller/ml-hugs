@@ -159,6 +159,7 @@ class HUGS_WO_TRIMLP(GaussianModel):
             'body_pose', 
             'betas', 
             'transl',
+            'deformed_normals',
             "appearance_embeddings", 
             "appearance_network"
             ]        
@@ -773,6 +774,7 @@ class HUGS_WO_TRIMLP(GaussianModel):
         rotq = matrix_to_quaternion(norm_rotmat)
                 
         self.normals = gs_normals
+        deformed_normals = (norm_rotmat @ gs_normals.unsqueeze(-1)).squeeze(-1)
         
         opacity = inverse_sigmoid(0.1 * torch.ones((t_pose_verts.shape[0], 1), dtype=torch.float, device="cuda"))
 
@@ -784,3 +786,4 @@ class HUGS_WO_TRIMLP(GaussianModel):
         self._rotation = nn.Parameter(rotq.requires_grad_(True))
         self._opacity = nn.Parameter(opacity.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        self.deformed_normals = nn.Parameter(deformed_normals, requires_grad = False)

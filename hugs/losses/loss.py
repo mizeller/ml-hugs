@@ -7,6 +7,8 @@ import torch
 from lpips import LPIPS
 import torch.nn as nn
 import torch.nn.functional as F
+from .utils import l1_loss, ssim 
+from hugs.utils.rotations import quaternion_to_matrix
 
 from hugs.utils.sampler import PatchSampler
 
@@ -34,6 +36,7 @@ class HumanSceneLoss(nn.Module):
         l_l1_w=0.8,
         l_lpips_w=0.0,
         l_lbs_w=0.0,
+        l_normal_w=0.0,
         l_humansep_w=0.0,
         l_dist_from_iter: int = 15000, # iteration after which distortion is added to loss    
         l_dist_w=0.0, 
@@ -53,6 +56,7 @@ class HumanSceneLoss(nn.Module):
         self.l_dist_from_iter = l_dist_from_iter
         self.l_dist_w = l_dist_w
         self.l_depth_normal_from_iter = l_depth_normal_from_iter
+        self.l_normal_w = l_normal_w
         self.l_depth_normal_w = l_depth_normal_w
         self.l_humansep_w = l_humansep_w
         self.use_patches = use_patches
@@ -193,6 +197,23 @@ class HumanSceneLoss(nn.Module):
                     human_gs_init_values['lbs_weights']).mean()
             loss_dict['lbs'] = self.l_lbs_w * loss_lbs
        
+        if self.l_normal_w > 0 and not render_mode == "scene":
+            # edges = human_gaussians.edges
+            if 'normals' in render_pkg.keys():
+                gs_normals = human_gs['normals']
+            else:
+                rot_q = human_gs['rotq']
+                rotmat = quaternion_to_matrix(rot_q)
+                xyz = human_gs['xyz']
+                gs_normals = torch.zeros_like(xyz).detach()
+                gs_normals[:, 2] = 1.0
+                
+                gs_normals = (rotmat @ gs_normals.unsqueeze(-1)).squeeze(-1)
+            
+            loss_normal_reg = 1 - torch.cosine_similarity(human_gs['normals_canon'], 
+                                                          human_gs_init_values['deformed_normals']).mean()
+            loss_dict['normal_reg'] = self.l_normal_w * loss_normal_reg
+
         # NOTE: add Gaussian Opacity Field regularizers here; i.e. depth distortion 
         #       and depth normal consistency (initially only for scene rendering)
         if render_mode in ["scene", "human"]:
