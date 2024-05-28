@@ -211,7 +211,7 @@ class HumanSceneLoss(nn.Module):
                 gs_normals = (rotmat @ gs_normals.unsqueeze(-1)).squeeze(-1)
             
             loss_normal_reg = 1 - torch.cosine_similarity(human_gs['normals_canon'], 
-                                                          human_gs_init_values['deformed_normals']).mean()
+                                                          human_gs_init_values['smpl_normals']).mean()
             loss_dict['normal_reg'] = self.l_normal_w * loss_normal_reg
 
         # NOTE: add Gaussian Opacity Field regularizers here; i.e. depth distortion 

@@ -317,6 +317,7 @@ class GaussianTrainer:
                     smpl_scale=data["smpl_scale"][None],
                     dataset_idx=rnd_idx,
                     ext_tfs=None,
+                    update_init_normals = t_iter > self.cfg.human.densify_from_iter and t_iter % self.cfg.human.densification_interval == 0
                 )
  
             if self.cfg.human.loss.humansep_w > 0.0 and render_mode == 'human_scene':
@@ -339,7 +340,7 @@ class GaussianTrainer:
             if self.human_gs:
                 self.human_gs.init_values["edges"] = self.human_gs.edges
                 # store the initial gaussian normals for new loss computation
-                self.human_gs.init_values["deformed_normals"] = self.human_gs.deformed_normals
+                self.human_gs.init_values["smpl_normals"] = self.human_gs.smpl_normals
 
             # Compute Loss
             loss, loss_dict, loss_extras = self.loss_fn(
