@@ -770,12 +770,31 @@ class HUGS_WO_TRIMLP(GaussianModel):
         import trimesh
         mesh = trimesh.Trimesh(vertices=t_pose_verts.detach().cpu().numpy(), faces=self.smpl_template.faces)
         
+        
         # add SMPL mesh pytorch3D object as instance variable
-        self.mesh = Meshes(
+        mesh_p3d = Meshes(
             verts=[t_pose_verts.cpu()], 
             faces=[torch.Tensor(self.smpl_template.faces, device='cpu')], 
             verts_normals=[torch.Tensor(mesh.vertex_normals, device='cpu')]
             ).cuda()
+
+        verts_packed = mesh_p3d.verts_packed()
+        faces_packed = mesh_p3d.faces_packed()
+        self.tris = verts_packed[faces_packed]
+
+        faces = mesh_p3d.faces_packed()
+        vertex_normals = mesh_p3d.verts_normals_packed()
+        faces_normals = vertex_normals[faces] # for each face, have the 3 vertex normals of the face
+
+        face_normals = torch.zeros_like(torch.Tensor(self.smpl_template.faces.shape[0], 3), device='cuda', dtype=torch.float32)
+        for face_idx in range(len(faces)):
+            # compute for each gaussian, it's corresponding reference normal for normal regularization
+            a, b, c = faces_normals[face_idx] # extract the vertex normals of the face
+            cross = torch.cross(b - a, c - a) # compute the cross product of two edges of the face -> surface normal
+            normal = torch.nn.functional.normalize(cross, dim=0) # normalize the surface normal 
+            face_normals[face_idx] = normal
+        self.smpl_mesh_normals = face_normals
+        assert self.smpl_mesh_normals.shape[0] == self.tris.shape[0], f"We need to have the same number of normals as tris, but got {self.smpl_mesh_normals.shape[0]} vs. {self.tris.shape[0]}"
 
         vert_normals = torch.tensor(mesh.vertex_normals).float().cuda()
         
@@ -803,53 +822,19 @@ class HUGS_WO_TRIMLP(GaussianModel):
 
         
     def update_smpl_normals(self):
-        # QUESTION: is there a way to implement this more efficiently?! it's super slow...
-
-        # for each gaussian in 3D space, find the closest SMPL mesh triangle & compute
-        # the surface normal to this triangle for normal regularization
-        
-        # SRC: code was taken from the `point_mesh_face_distance()` method
-        # import:   from pytorch3d.loss import point_mesh_face_distance
-        # or check: https://pytorch3d.readthedocs.io/en/latest/_modules/pytorch3d/loss/point_mesh_distance.html
-
-        verts_packed = self.mesh.verts_packed()
-        faces_packed = self.mesh.faces_packed()
-        tris = verts_packed[faces_packed]
-
-        # NOTE: i added the indeces as a return variable in the forward method in `point_mesh_distance.py` myself
+        # NOTE: i added the indeces as a return variable in the 
+        # forward method in `point_mesh_distance.py` myself
         _, point_to_face_idx = point_face_distance(
             self.get_xyz,
             torch.Tensor([0]).cuda().long(),
-            tris,
+            self.tris,
             torch.Tensor([0]).cuda().long(),
             len(self.get_xyz),
             0.005
         )
-        
-        # src: https://github.com/facebookresearch/pytorch3d/issues/865#issuecomment-937211068
-        faces = self.mesh.faces_packed()  # (F, 3)
-        vertex_normals = self.mesh.verts_normals_packed()  # (V, 3)
-        faces_normals = vertex_normals[faces] # (F, 3, 3) 
-
-        # QUESTION: once we have the closest face, how do we extract the surface normal? A. basic geometry...
-        # QUESTION: how do we ensure the normal is pointing outwards? A. I don't think it really matters, does it?
-        #                                                                we are only interested in the direction of the normal, 
-        #                                                                not the orientation of the face itself?
-        #                                                                I guess it does matter for the loss computation though... 
-
-        # at this point, extract the surface normals of the nearests faces
-        # - https://github.com/facebookresearch/pytorch3d/issues/1016 // normal computation taken from here
-        # - https://github.com/facebookresearch/pytorch3d/issues/193
-        # - https://pytorch3d.readthedocs.io/en/latest/_modules/pytorch3d/loss/point_mesh_distance.html
-        # - https://pytorch3d.readthedocs.io/en/latest/_modules/pytorch3d/loss/point_mesh_distance.html#point_mesh_face_distance
-
         new_smpl_normals = torch.zeros_like(torch.Tensor(point_to_face_idx.shape[0], 3), device='cuda', dtype=torch.float32)
         for i, face_idx in enumerate(point_to_face_idx):
-            # compute for each gaussian, it's corresponding reference normal for normal regularization
-            a, b, c = faces_normals[face_idx] # extract the vertex normals of the face
-            cross = torch.cross(b - a, c - a) # compute the cross product of two edges of the face -> surface normal
-            normal = torch.nn.functional.normalize(cross, dim=0) # normalize the surface normal 
-            new_smpl_normals[i] = normal
+            new_smpl_normals[i] = self.smpl_mesh_normals[face_idx] 
 
         self.smpl_normals = new_smpl_normals
         assert self.smpl_normals.shape[0] == self.get_xyz.shape[0], f"We need to have the same number of normals as gaussians, but got {self.smpl_normals.shape[0]} vs. {self.get_xyz.shape[0]}"
