@@ -258,6 +258,11 @@ def torch_rotation_matrix_from_vectors(vec1: torch.Tensor, vec2: torch.Tensor):
     return rot_mat
 
 
+def pytorch3d_mesh_2_ply(mesh, ply_path: str = "tmp.ply"):   
+    from pytorch3d.io import IO
+    IO().save_mesh(mesh, ply_path)
+    return
+
 class ClampWithGrad(torch.autograd.Function):
     @staticmethod
     def forward (ctx, input):
