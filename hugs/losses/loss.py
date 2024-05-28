@@ -14,7 +14,8 @@ from hugs.utils.sampler import PatchSampler
 
 from .utils import l1_loss, ssim
 from hugs.utils.depth_utils import depth_to_normal
-from hugs.models.gaussian_model import GaussianModel    
+from hugs.models.hugs_wo_trimlp import HUGS_WO_TRIMLP
+from common.xdict import xdict
 
 class ViewPointCamera:
     def __init__(self, data):
@@ -90,7 +91,8 @@ class HumanSceneLoss(nn.Module):
         human_gs_init_values=None,
         bg_color=None,
         human_bg_color=None,
-        iteration: int = None
+        iteration: int = None, 
+        gaussians: HUGS_WO_TRIMLP = None
     ):
 
         # construct pseudo viewpoint_cam object to avoid 
@@ -126,7 +128,6 @@ class HumanSceneLoss(nn.Module):
             extras_dict['gt_img'] = gt_image
             pred_img = pred_img * mask
  
-
         if self.l_l1_w > 0.0:
             if render_mode == "human":
                 Ll1 = l1_loss(pred_img, gt_image, mask)
@@ -148,6 +149,56 @@ class HumanSceneLoss(nn.Module):
                 loss_ssim = loss_ssim
                 
             loss_dict['ssim'] = self.l_ssim_w * loss_ssim
+
+        if gaussians.binding != None:
+            visibility_filter = render_pkg['visibility_filter']
+
+            # GaussianAvatars Optimization Params; TODO: add to cfg 
+            opt: xdict = xdict({
+                "flame_expr_lr": 1e-3,
+                "flame_trans_lr": 1e-6,
+                "flame_pose_lr": 1e-5,
+                "percent_dense": 0.01,
+                "lambda_dssim": 0.2,
+                "lambda_xyz": 1e-2,
+                "threshold_xyz": 1.,
+                "metric_xyz": False,
+                "lambda_scale": 1.,
+                "threshold_scale": 0.6,
+                "metric_scale": False,
+                "lambda_dynamic_offset": 0.,
+                "lambda_laplacian": 0.,
+                "lambda_dynamic_offset_std": 0, #1.
+            })
+
+            if opt.metric_xyz:
+                loss_dict['xyz'] = F.relu((gaussians._xyz*gaussians.face_scaling[gaussians.binding])[visibility_filter] - opt.threshold_xyz).norm(dim=1).mean() * opt.lambda_xyz
+            else:
+                # loss_dict['xyz'] = gaussians._xyz.norm(dim=1).mean() * opt.lambda_xyz
+                loss_dict['xyz'] = F.relu(gaussians._xyz[visibility_filter].norm(dim=1) - opt.threshold_xyz).mean() * opt.lambda_xyz
+
+            if opt.lambda_scale != 0:
+                if opt.metric_scale:
+                    loss_dict['scale'] = F.relu(gaussians.get_scaling[visibility_filter] - opt.threshold_scale).norm(dim=1).mean() * opt.lambda_scale
+                else:
+                    # loss_dict['scale'] = F.relu(gaussians._scaling).norm(dim=1).mean() * opt.lambda_scale
+                    loss_dict['scale'] = F.relu(torch.exp(gaussians._scaling[visibility_filter]) - opt.threshold_scale).norm(dim=1).mean() * opt.lambda_scale
+
+            if opt.lambda_dynamic_offset != 0:
+                loss_dict['dy_off'] = gaussians.compute_dynamic_offset_loss() * opt.lambda_dynamic_offset
+
+            if opt.lambda_dynamic_offset_std != 0:
+                ti = viewpoint_cam.timestep
+                t_indices =[ti]
+                if ti > 0:
+                    t_indices.append(ti-1)
+                if ti < gaussians.num_timesteps - 1:
+                    t_indices.append(ti+1)
+                loss_dict['dynamic_offset_std'] = gaussians.flame_param['dynamic_offset'].std(dim=0).mean() * opt.lambda_dynamic_offset_std
+        
+            if opt.lambda_laplacian != 0:
+                loss_dict['lap'] = gaussians.compute_laplacian_loss() * opt.lambda_laplacian
+        
         
         if self.l_lpips_w > 0.0 and not render_mode == "scene":
             if self.use_patches:

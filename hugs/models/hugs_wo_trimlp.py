@@ -39,6 +39,9 @@ from hugs.utils.graphics_utils import BasicPointCloud
 
 # GaussianModel(ABC)
 from hugs.models.gaussian_model import GaussianModel
+from utils.graphics_utils import compute_face_orientation
+from roma import quat_xyzw_to_wxyz, rotmat_to_unitquat
+
 
 SCALE_Z = 1e-5
 
@@ -193,6 +196,20 @@ class HUGS_WO_TRIMLP(GaussianModel):
         # init betas 
         self.create_betas(init_betas, cfg.optim_betas)
 
+        # GaussianAvatars Stuff
+        # Toyota Motor Europe NV/SA and its affiliated companies retain all intellectual property and proprietary rights in and to the following code lines and related documentation. Any commercial use, reproduction, disclosure or distribution of these code lines and related documentation without an express license agreement from Toyota Motor Europe NV/SA is strictly prohibited.
+        # for binding GaussianModel to a mesh
+        self.face_center = None
+        self.face_scaling = None
+        self.face_orien_mat = None
+        self.face_orien_quat = None
+        self.binding = None  # gaussian index to face index
+        self.binding_counter = None  # number of points bound to each face
+        self.timestep = None  # the current timestep
+        self.num_timesteps = 1  # required by viewers
+        
+        
+
         # same for both human models 
         if not eval_mode:
             self.initialize()
@@ -235,12 +252,39 @@ class HUGS_WO_TRIMLP(GaussianModel):
    
     @property
     def get_scaling(self):
-        return self.scaling_activation(self._scaling)
+        if self.binding is None:
+            return self.scaling_activation(self._scaling)
+        else:
+            # Toyota Motor Europe NV/SA and its affiliated companies retain all intellectual property and proprietary rights in and to the following code lines and related documentation. Any commercial use, reproduction, disclosure or distribution of these code lines and related documentation without an express license agreement from Toyota Motor Europe NV/SA is strictly prohibited.
+            if self.face_scaling is None:
+                self.select_mesh_by_timestep(0)
+
+            scaling = self.scaling_activation(self._scaling)
+            return scaling * self.face_scaling[self.binding]
+
     
-    # @property
+    # # @property
+    # def get_rotation(self):
+    #     return self.rotation_activation(self._rotation)
+    
+    @property
     def get_rotation(self):
-        return self.rotation_activation(self._rotation)
-   
+        # TODO: remove roma package from requirements; use pytorch3d instead
+        from roma import quat_xyzw_to_wxyz, quat_wxyz_to_xyzw, quat_product
+        if self.binding is None:
+            return self.rotation_activation(self._rotation)
+        else:
+            # Toyota Motor Europe NV/SA and its affiliated companies retain all intellectual property and proprietary rights in and to the following code lines and related documentation. Any commercial use, reproduction, disclosure or distribution of these code lines and related documentation without an express license agreement from Toyota Motor Europe NV/SA is strictly prohibited.
+            # if self.face_orien_quat is None:
+            #     self.select_mesh_by_timestep(0)
+
+            # always need to normalize the rotation quaternions before chaining them
+            rot = self.rotation_activation(self._rotation)
+            face_orien_quat = self.rotation_activation(self.face_orien_quat[self.binding])
+            return quat_xyzw_to_wxyz(quat_product(quat_wxyz_to_xyzw(face_orien_quat), quat_wxyz_to_xyzw(rot)))  # roma
+            # return quaternion_multiply(face_orien_quat, rot)  # pytorch3d 
+    
+    
     @property
     def get_features(self):
         features_dc = self._features_dc
@@ -498,7 +542,12 @@ class HUGS_WO_TRIMLP(GaussianModel):
         samples = torch.normal(mean=means, std=stds)
         rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1)
         new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
-        new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
+        if self.binding is not None:
+            selected_scaling = self.get_scaling[selected_pts_mask]
+            face_scaling = self.face_scaling[self.binding[selected_pts_mask]]
+            new_scaling = self.scaling_inverse_activation((selected_scaling / face_scaling).repeat(N,1) / (0.8*N))
+        else:
+            new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))    
         new_rotation = self._rotation[selected_pts_mask].repeat(N,1)
         new_features_dc = self._features_dc[selected_pts_mask].repeat(N,1,1)
         new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
@@ -784,6 +833,7 @@ class HUGS_WO_TRIMLP(GaussianModel):
 
         faces = mesh_p3d.faces_packed()
         vertex_normals = mesh_p3d.verts_normals_packed()
+        # TODO: use pytorch3d
         faces_normals = vertex_normals[faces] # for each face, have the 3 vertex normals of the face
 
         face_normals = torch.zeros_like(torch.Tensor(self.smpl_template.faces.shape[0], 3), device='cuda', dtype=torch.float32)
@@ -819,7 +869,6 @@ class HUGS_WO_TRIMLP(GaussianModel):
         self._rotation = nn.Parameter(rotq.requires_grad_(True))
         self._opacity = nn.Parameter(opacity.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
-
         
     def update_smpl_normals(self):
         # NOTE: i added the indeces as a return variable in the 
@@ -833,8 +882,28 @@ class HUGS_WO_TRIMLP(GaussianModel):
             0.005
         )
         new_smpl_normals = torch.zeros_like(torch.Tensor(point_to_face_idx.shape[0], 3), device='cuda', dtype=torch.float32)
-        for i, face_idx in enumerate(point_to_face_idx):
+        for i, face_idx in enumerate(point_to_face_idx): # TODO: replace w/ index select
             new_smpl_normals[i] = self.smpl_mesh_normals[face_idx] 
 
         self.smpl_normals = new_smpl_normals
         assert self.smpl_normals.shape[0] == self.get_xyz.shape[0], f"We need to have the same number of normals as gaussians, but got {self.smpl_normals.shape[0]} vs. {self.get_xyz.shape[0]}"
+
+    def update_mesh_properties(self, verts, verts_cano):
+        faces = self.flame_model.faces
+        triangles = verts[:, faces]
+
+        # position
+        self.face_center = triangles.mean(dim=-2).squeeze(0)
+
+        # orientation and scale
+        self.face_orien_mat, self.face_scaling = compute_face_orientation(verts.squeeze(0), faces.squeeze(0), return_scale=True)
+        # self.face_orien_quat = matrix_to_quaternion(self.face_orien_mat)  # pytorch3d (WXYZ)
+        self.face_orien_quat = quat_xyzw_to_wxyz(rotmat_to_unitquat(self.face_orien_mat))  # roma
+
+        # for mesh rendering
+        self.verts = verts
+        self.faces = faces
+
+        # for mesh regularization
+        self.verts_cano = verts_cano    
+    

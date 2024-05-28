@@ -353,7 +353,8 @@ class GaussianTrainer:
                 ),
                 bg_color=bg_color,
                 human_bg_color=human_bg_color,
-                iteration = t_iter
+                iteration = t_iter,
+                gaussians = self.human_gs, # assuming humna_gs is of type HUGS_WO_TRIMLP  
             )
 
             loss.backward()
